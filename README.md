@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Last-Minute Life Saver ⚡
 
-## Getting Started
+> AI-powered deadline rescue tool — sync your Linear backlog, let Gemini 2.5 Flash
+> schedule your week, and stop procrastinating.
 
-First, run the development server:
+**Live Demo:** <!-- Add your deployed Cloud Run URL here -->
+
+## ✨ Features
+
+- 🤖 **Gemini 2.5 Flash** schedules your Linear issues into 45-minute focus blocks
+- 📅 **FullCalendar** interactive week/day view — drag a slot to create deadlines
+- 🔐 **Clerk authentication** — sign in to load your personal Linear queue
+- 🎨 Animated glassmorphic UI with real-time wave canvas background
+- ⏰ Customizable work hours and scheduling window (1–168 hours)
+- 💾 Events persist in `localStorage` across sessions
+
+## 🛠 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 16, React 19, TypeScript |
+| Styling | Tailwind CSS v4 |
+| Calendar | FullCalendar (react) |
+| AI | Google Gemini 2.5 Flash (`@google/genai`) |
+| Auth | Clerk (`@clerk/nextjs`) |
+| CRM | Linear SDK (`@linear/sdk`) |
+| Hosting | Google Cloud Run (via AI Studio) |
+
+## 🚀 Local Development
 
 ```bash
+# 1. Clone the repo
+git clone https://github.com/YOUR_USERNAME/vibe2ship.git
+cd vibe2ship
+
+# 2. Install dependencies
+npm install
+
+# 3. Set up environment variables
+cp .env.example .env.local
+# Fill in your keys in .env.local
+
+# 4. Start dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Visit http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🔑 Environment Variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Description |
+|---|---|
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
+| `CLERK_SECRET_KEY` | Clerk secret key |
+| `LINEAR_API_KEY` | Linear personal API key |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Copy `.env.example` to `.env.local` and fill in your values. **Never commit `.env.local`.**
 
-## Learn More
+## 🏗 How It Works
 
-To learn more about Next.js, take a look at the following resources:
+1. **Sign in** via Clerk — the app fetches your open Linear issues
+2. Set your **work hours** and **scheduling window** in the sidebar
+3. Click **Sync CRM Tasks** — Gemini 2.5 Flash generates time-boxed focus blocks
+4. View and drag events in the **FullCalendar** week view
+5. Use **Add Deadline** or drag a calendar slot to create manual events
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 📁 Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/
+  app/
+    page.tsx          # Main UI (calendar + control panel)
+    layout.tsx        # Root layout with Clerk provider
+    globals.css       # Global styles & CSS variables
+    api/
+      linear/         # GET  /api/linear  — fetch Linear issues
+      schedule/       # POST /api/schedule — Gemini scheduling
+    components/
+      DeadlineModal   # Manual deadline creation modal
+backend/
+  main.py             # Legacy FastAPI server (reference only)
+```
 
-## Deploy on Vercel
+## 📜 License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT

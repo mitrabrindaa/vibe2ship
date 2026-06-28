@@ -56,6 +56,7 @@ public/next.svg
 public/vercel.svg
 public/window.svg
 README.md
+src/app/api/linear/route.ts
 src/app/api/schedule/route.ts
 src/app/components/DeadlineModal.module.css
 src/app/components/DeadlineModal.tsx
@@ -63,6 +64,7 @@ src/app/favicon.ico
 src/app/globals.css
 src/app/layout.tsx
 src/app/page.tsx
+src/proxy.ts
 tsconfig.json
 </directory_structure>
 
@@ -873,11 +875,13 @@ export default nextConfig;
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.5.9",
     "@fullcalendar/daygrid": "^6.1.21",
     "@fullcalendar/interaction": "^6.1.21",
     "@fullcalendar/react": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
     "@google/genai": "^2.10.0",
+    "@linear/sdk": "^87.0.0",
     "lucide-react": "^1.21.0",
     "next": "16.2.9",
     "react": "19.2.4",
@@ -965,11 +969,78 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 </file>
 
+<file path="src/app/api/linear/route.ts">
+import { NextResponse } from "next/server";
+import { currentUser } from "@clerk/nextjs/server";
+import { LinearClient } from "@linear/sdk";
+
+// ── Priority label map ─────────────────────────────────────────────────────
+const PRIORITY_LABELS: Record<number, string> = {
+  0: "No priority",
+  1: "Urgent",
+  2: "High",
+  3: "Medium",
+  4: "Low",
+};
+
+export async function GET() {
+  // ── Clerk auth gate — must be signed in ──────────────────────────────────
+  const user = await currentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // ── Linear API key ───────────────────────────────────────────────────────
+  const apiKey = process.env.LINEAR_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "LINEAR_API_KEY is not set in environment variables." },
+      { status: 500 }
+    );
+  }
+
+  try {
+    const linearClient = new LinearClient({ apiKey });
+
+    // Use linear.viewer — the personal API key already authenticates as the
+    // workspace user who created it, so no email-based lookup is needed.
+    const me = await linearClient.viewer;
+
+    // Fetch active (non-completed, non-canceled) issues assigned to this user
+    const issuesPage = await me.assignedIssues({
+      filter: {
+        completedAt: { null: true },
+        canceledAt:  { null: true },
+      },
+      first: 50,
+    });
+
+    // Map each issue to a human-readable string for Gemini
+    const tasks: string[] = issuesPage.nodes.map((issue) => {
+      const priorityLabel = PRIORITY_LABELS[issue.priority ?? 0] ?? "No priority";
+      const prefix =
+        issue.priority && issue.priority <= 2
+          ? `[Priority: ${priorityLabel}] `
+          : "";
+      return `${prefix}${issue.title}`;
+    });
+
+    return NextResponse.json(tasks);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[linear/route] Error:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+</file>
+
 <file path="src/app/api/schedule/route.ts">
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
 
 function buildSystemPrompt(workStart: string, workEnd: string, timeframeHours: number): string {
   return `You are an elite, stress-reducing scheduling assistant.
@@ -981,6 +1052,7 @@ Rules:
 - Only schedule between ${workStart} and ${workEnd} local time — NEVER outside this window
 - Spread work across the next ${timeframeHours} hours starting from right now
 - Assign a distinct, vibrant hex background color to each unique task
+- For high-priority tasks (those whose title starts with "[Urgent]" or "[High]"), add a reminder 10 minutes before the block starts
 
 You MUST return ONLY a valid JSON array — no markdown, no explanation, no wrapper object.
 Each element in the array must match this exact shape:
@@ -988,11 +1060,82 @@ Each element in the array must match this exact shape:
   "title": string,
   "start": string (ISO 8601 with timezone offset, e.g. "2025-01-15T09:00:00+05:30"),
   "end": string (ISO 8601, exactly 45 minutes after start),
-  "backgroundColor": string (hex color, e.g. "#e85d04")
-}`;
+  "backgroundColor": string (hex color, e.g. "#e85d04"),
+  "reminders": [
+    {
+      "id": string (generate a short random alphanumeric string, e.g. "ai-r-x7k2"),
+      "type": "once",
+      "date": string (YYYY-MM-DD, 10 minutes before start),
+      "time": string (HH:MM, 10 minutes before start),
+      "dayOfWeek": 1,
+      "dayOfMonth": 1,
+      "month": 0,
+      "yearDay": 1
+    }
+  ]
+}
+
+The "reminders" field is OPTIONAL. Omit it entirely for normal-priority tasks.
+NEVER include reminders for tasks that are not high-priority.
+`;
+}
+
+// ── Retry helper ────────────────────────────────────────────────────────────
+function isRetryable(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("503") ||
+    msg.includes("UNAVAILABLE") ||
+    msg.includes("high demand") ||
+    msg.includes("overloaded")
+  );
+}
+
+async function generateWithRetry(
+  userMessage: string,
+  systemPrompt: string,
+  maxAttempts = 3
+): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: userMessage,
+        config: {
+          systemInstruction: systemPrompt,
+          responseMimeType: "application/json",
+        },
+      });
+      return response.text ?? "";
+    } catch (err) {
+      lastErr = err;
+      if (isRetryable(err) && attempt < maxAttempts) {
+        const delayMs = 2000 * attempt; // 2 s → 4 s
+        console.warn(
+          `[schedule/route] Gemini 503 — retry ${attempt}/${maxAttempts - 1} in ${delayMs}ms`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      } else {
+        throw err; // non-retryable or out of attempts
+      }
+    }
+  }
+  throw lastErr;
 }
 
 export async function POST(req: NextRequest) {
+  // ── Key sanity check ────────────────────────────────────────────────────
+  if (!GEMINI_API_KEY || !GEMINI_API_KEY.startsWith("AIza")) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid GEMINI_API_KEY. Get a valid key from https://aistudio.google.com/apikey — it must start with 'AIza'.",
+      },
+      { status: 500 }
+    );
+  }
+
   try {
     const body = await req.json();
     const tasks: string[] = body.tasks ?? [];
@@ -1012,16 +1155,7 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = buildSystemPrompt(workStart, workEnd, timeframeHours);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: userMessage,
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: "application/json",
-      },
-    });
-
-    let raw = response.text ?? "";
+    let raw = await generateWithRetry(userMessage, systemPrompt);
 
     // Strip markdown fences if present
     if (raw.startsWith("```")) {
@@ -1033,7 +1167,13 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     console.error("[schedule/route]", err);
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    // Surface a friendly message for Gemini 503s
+    const friendly = isRetryable(err)
+      ? "Gemini is experiencing high demand right now. Please try again in a moment."
+      : message;
+
+    return NextResponse.json({ error: friendly }, { status: 503 });
   }
 }
 </file>
@@ -2214,6 +2354,12 @@ html, body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.15; }
+}
+
+
 /* ── Calendar panel header ───────────────────────────────────────────── */
 .calendar-header {
   display: flex;
@@ -2763,6 +2909,7 @@ html, body {
 
 <file path="src/app/layout.tsx">
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -2777,9 +2924,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
-      <body className="h-full overflow-hidden">{children}</body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className="h-full">
+        <body className="h-full overflow-hidden">{children}</body>
+      </html>
+    </ClerkProvider>
   );
 }
 </file>
@@ -2790,6 +2939,7 @@ export default function RootLayout({
 import { useEffect, useRef, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { Calendar, RefreshCw, Zap, CheckCircle2, AlertCircle, PlusCircle, Settings2 } from "lucide-react";
+import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import interactionPlugin from "@fullcalendar/interaction";
 import type { DateSelectArg } from "@fullcalendar/core";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -2822,15 +2972,9 @@ interface ModalState {
   prefillEndTime?: string;
 }
 
-// ── Mock CRM tasks ─────────────────────────────────────────────────────────
-const MOCK_CRM_TASKS = [
-  "Follow up with Acme Corp on Q3 proposal and address pricing objections",
-  "Prepare and send onboarding materials to 3 new enterprise clients",
-  "Audit overdue support tickets and escalate priority-1 blockers to engineering",
-];
-
-const TASK_PREVIEW_COLORS = ["#e85d04", "#f48c06", "#d62828"];
+const TASK_PREVIEW_COLORS = ["#e85d04", "#f48c06", "#d62828", "#ffba08", "#06b6d4"];
 const MANUAL_EVENT_COLOR  = "#38bdf8";
+
 
 // ── Wave canvas hook ───────────────────────────────────────────────────────
 function useWaveCanvas(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
@@ -2906,6 +3050,7 @@ function toTimeStr(d: Date) {
 
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function Home() {
+  const { isSignedIn } = useAuth();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2925,6 +3070,36 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("lifesaver_events", JSON.stringify(events));
   }, [events]);
+
+  // ── Linear CRM tasks ─────────────────────────────────────────
+  const [crmTasks,        setCrmTasks]        = useState<string[]>([]);
+  const [crmLoading,      setCrmLoading]      = useState(true);
+  const [crmError,        setCrmError]        = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      setCrmLoading(false);
+      return;
+    }
+    async function fetchLinearTasks() {
+      setCrmLoading(true);
+      setCrmError(null);
+      try {
+        const res = await fetch("/api/linear");
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `Linear API error ${res.status}`);
+        }
+        const tasks: string[] = await res.json();
+        setCrmTasks(tasks);
+      } catch (err: unknown) {
+        setCrmError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCrmLoading(false);
+      }
+    }
+    fetchLinearTasks();
+  }, [isSignedIn]);
 
   // User settings
   const [workStart, setWorkStart]           = useState("09:00");
@@ -3013,7 +3188,7 @@ export default function Home() {
       const res = await fetch("/api/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: MOCK_CRM_TASKS, workStart, workEnd, timeframeHours }),
+        body: JSON.stringify({ tasks: crmTasks, workStart, workEnd, timeframeHours }),
       });
 
       if (!res.ok) {
@@ -3022,12 +3197,25 @@ export default function Home() {
       }
 
       const data: Omit<CalendarEvent, "id">[] = await res.json();
-      const enriched: CalendarEvent[] = data.map((e) => ({
-        ...e,
-        id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        borderColor: e.backgroundColor,
-        textColor: "#ffffff",
-      }));
+      const enriched: CalendarEvent[] = data.map((e) => {
+        // The AI may return reminders at the top level of each event object
+        const raw = e as unknown as Record<string, unknown>;
+        const aiReminders = Array.isArray(raw.reminders)
+          ? (raw.reminders as CalendarEvent["extendedProps"] extends undefined ? never : NonNullable<CalendarEvent["extendedProps"]>["reminders"])
+          : undefined;
+
+        return {
+          ...e,
+          id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          borderColor: e.backgroundColor,
+          textColor: "#ffffff",
+          extendedProps: {
+            ...e.extendedProps,
+            reminders: aiReminders ?? e.extendedProps?.reminders ?? [],
+          },
+        };
+      });
+
 
       setEvents((prev) => {
         const manual = prev.filter((ev) => ev.id.startsWith("manual-"));
@@ -3039,7 +3227,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [workStart, workEnd, timeframeHours]);
+  }, [crmTasks, workStart, workEnd, timeframeHours]);
 
   const manualCount = events.filter((e) => e.id.startsWith("manual-")).length;
   const aiCount     = events.length - manualCount;
@@ -3068,10 +3256,50 @@ export default function Home() {
         <aside className="control-panel">
           {/* Header */}
           <div>
-            <span className="badge">
-              <Zap size={11} />
-              AI Scheduler
-            </span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span className="badge">
+                <Zap size={11} />
+                AI Scheduler
+              </span>
+              {/* Clerk auth controls */}
+              {!isSignedIn ? (
+                <SignInButton mode="modal">
+                  <button
+                    id="clerk-sign-in-btn"
+                    style={{
+                      fontSize: "0.72rem",
+                      fontWeight: 600,
+                      padding: "0.3rem 0.75rem",
+                      borderRadius: "6px",
+                      border: "1px solid rgba(255,255,255,0.18)",
+                      background: "rgba(255,255,255,0.06)",
+                      color: "rgba(255,255,255,0.8)",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                      letterSpacing: "0.03em",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.12)";
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.3)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.06)";
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.18)";
+                    }}
+                  >
+                    Sign In
+                  </button>
+                </SignInButton>
+              ) : (
+                <UserButton
+                  appearance={{
+                    elements: {
+                      avatarBox: { width: 28, height: 28 },
+                    },
+                  }}
+                />
+              )}
+            </div>
             <h1 className="gradient-heading" style={{ marginTop: "0.75rem" }}>
               Last-Minute<br />Life Saver
             </h1>
@@ -3081,12 +3309,57 @@ export default function Home() {
             </p>
           </div>
 
-          {/* CRM Tasks preview */}
+          {/* Linear Tasks preview */}
           <div className="glass-card">
-            <div className="task-list-header">📋 CRM Tasks Queue</div>
-            {MOCK_CRM_TASKS.map((task, i) => (
+            <div className="task-list-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>📋 Linear Issues Queue</span>
+              {!crmLoading && !crmError && (
+                <span style={{ fontSize: "0.65rem", fontWeight: 600, color: "var(--text-muted)", opacity: 0.7 }}>
+                  {crmTasks.length} issue{crmTasks.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            {/* Loading skeleton */}
+            {crmLoading && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                {[1, 2, 3].map((n) => (
+                  <div key={n} className="task-pill" style={{ opacity: 0.4 }}>
+                    <div className="task-pill-dot" style={{ backgroundColor: "rgba(255,255,255,0.2)" }} />
+                    <div style={{ height: "0.75rem", borderRadius: "4px", background: "rgba(255,255,255,0.1)", flex: 1, animation: "pulse 1.5s ease-in-out infinite" }} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Error state */}
+            {!crmLoading && crmError && (
+              <div style={{ fontSize: "0.78rem", color: "#f87171", lineHeight: 1.5, padding: "0.25rem 0" }}>
+                ⚠ {crmError}
+              </div>
+            )}
+
+            {/* Not signed in state */}
+            {!isSignedIn && !crmLoading && (
+              <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", padding: "0.5rem 0" }}>
+                Sign in to load your Linear issues.
+              </div>
+            )}
+
+            {/* Empty state */}
+            {isSignedIn && !crmLoading && !crmError && crmTasks.length === 0 && (
+              <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", padding: "0.5rem 0" }}>
+                No open issues assigned to you in Linear.
+              </div>
+            )}
+
+            {/* Task list */}
+            {!crmLoading && !crmError && crmTasks.map((task, i) => (
               <div key={i} className="task-pill">
-                <div className="task-pill-dot" style={{ backgroundColor: TASK_PREVIEW_COLORS[i] }} />
+                <div
+                  className="task-pill-dot"
+                  style={{ backgroundColor: TASK_PREVIEW_COLORS[i % TASK_PREVIEW_COLORS.length] }}
+                />
                 <span style={{ fontSize: "0.82rem", lineHeight: 1.4 }}>{task}</span>
               </div>
             ))}
@@ -3242,6 +3515,23 @@ export default function Home() {
     </>
   );
 }
+</file>
+
+<file path="src/proxy.ts">
+import { clerkMiddleware } from "@clerk/nextjs/server";
+
+export default clerkMiddleware();
+
+export const config = {
+  matcher: [
+    // Skip Next.js internals and all static files, unless found in search params
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // Always run for API routes
+    "/(api|trpc)(.*)",
+    // Always run for Clerk-specific frontend API routes
+    "/__clerk/(.*)",
+  ],
+};
 </file>
 
 <file path="tsconfig.json">
