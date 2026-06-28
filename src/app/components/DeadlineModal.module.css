@@ -1,0 +1,487 @@
+/* ════════════════════════════════════════════════════════
+   DeadlineModal — CSS Module
+   ════════════════════════════════════════════════════════ */
+
+/* ── Backdrop ─────────────────────────────────────────── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.70);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 100;
+  animation: backdropIn 0.22s ease both;
+}
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Drawer panel ─────────────────────────────────────── */
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 500px;
+  max-width: 96vw;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg,
+      rgba(22, 8, 2, 0.98) 0%,
+      rgba(12, 4, 1, 0.99) 100%);
+  border-left: 1px solid rgba(232, 93, 4, 0.18);
+  box-shadow:
+    -2px 0 0 rgba(232, 93, 4, 0.1),
+    -32px 0 80px rgba(0, 0, 0, 0.75);
+  animation: panelIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+@keyframes panelIn {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+/* ── Top accent bar ───────────────────────────────────── */
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #d62828, #e85d04, #f48c06, #ffba08);
+  z-index: 1;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.4rem 1.6rem 1.1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 0;
+}
+
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.titleIcon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #d62828 0%, #e85d04 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 6px 18px rgba(232, 93, 4, 0.45);
+}
+
+.titleText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.titleMain {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff8f0;
+  line-height: 1.2;
+}
+
+.titleSub {
+  font-size: 0.72rem;
+  color: rgba(255, 248, 240, 0.4);
+  font-weight: 500;
+}
+
+.closeBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 248, 240, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+.closeBtn:hover {
+  background: rgba(214, 40, 40, 0.16);
+  border-color: rgba(214, 40, 40, 0.4);
+  color: #fca5a5;
+  transform: scale(1.06);
+}
+
+/* ── Scrollable body ──────────────────────────────────── */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.4rem 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 93, 4, 0.25) transparent;
+}
+
+/* ── Field wrapper ────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 248, 240, 0.45);
+}
+
+.required {
+  color: #e85d04;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+/* ── Inputs ───────────────────────────────────────────── */
+.input {
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: #fff8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  color-scheme: dark;
+}
+.input::placeholder { color: rgba(255, 248, 240, 0.2); }
+.input:focus {
+  border-color: rgba(232, 93, 4, 0.55);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.12);
+}
+.inputError {
+  border-color: rgba(214, 40, 40, 0.6) !important;
+  box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.1) !important;
+}
+.inputSm {
+  padding: 0.48rem 0.7rem;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
+
+.textarea {
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: #fff8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.65;
+  outline: none;
+  resize: vertical;
+  min-height: 84px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  color-scheme: dark;
+}
+.textarea::placeholder { color: rgba(255, 248, 240, 0.2); }
+.textarea:focus {
+  border-color: rgba(232, 93, 4, 0.55);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.1);
+}
+
+.errorMsg {
+  font-size: 0.7rem;
+  color: #f87171;
+  font-weight: 500;
+}
+
+/* ── Date + Time row ──────────────────────────────────── */
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+
+/* ── Divider ──────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0.25rem 0;
+}
+
+/* ── Reminders section ────────────────────────────────── */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.1rem;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #fff8f0;
+}
+
+.reminderCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: rgba(232, 93, 4, 0.22);
+  border: 1px solid rgba(232, 93, 4, 0.4);
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #f48c06;
+}
+
+.addReminderBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.38rem 0.85rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #f48c06;
+  background: rgba(244, 140, 6, 0.1);
+  border: 1px solid rgba(244, 140, 6, 0.28);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  letter-spacing: 0.02em;
+}
+.addReminderBtn:hover {
+  background: rgba(244, 140, 6, 0.2);
+  border-color: rgba(244, 140, 6, 0.5);
+  transform: translateY(-1px);
+}
+
+.emptyHint {
+  text-align: center;
+  font-size: 0.78rem;
+  color: rgba(255, 248, 240, 0.22);
+  font-style: italic;
+  padding: 0.75rem 0 0.25rem;
+}
+
+/* ── Reminder list ────────────────────────────────────── */
+.reminderList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.reminderCard {
+  position: relative;
+  padding: 1rem 1rem 0.85rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  animation: cardIn 0.22s ease both;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reminderCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reminderNum {
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: rgba(232, 93, 4, 0.7);
+  text-transform: uppercase;
+}
+
+.deleteBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(214, 40, 40, 0.18);
+  background: rgba(214, 40, 40, 0.07);
+  color: rgba(248, 113, 113, 0.5);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.deleteBtn:hover {
+  background: rgba(214, 40, 40, 0.22);
+  border-color: rgba(214, 40, 40, 0.45);
+  color: #f87171;
+  transform: scale(1.08);
+}
+
+/* ── Type pills ───────────────────────────────────────── */
+.pillGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.28rem 0.65rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(255, 248, 240, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  line-height: 1;
+}
+.pill:hover {
+  background: rgba(232, 93, 4, 0.1);
+  border-color: rgba(232, 93, 4, 0.28);
+  color: #f48c06;
+}
+.pillActive {
+  background: rgba(232, 93, 4, 0.18);
+  border-color: rgba(232, 93, 4, 0.5);
+  color: #f48c06;
+  box-shadow: 0 0 12px rgba(232, 93, 4, 0.14);
+}
+
+/* ── Reminder date/time pickers ───────────────────────── */
+.reminderPickers {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.recurLabel {
+  font-size: 0.76rem;
+  color: rgba(255, 248, 240, 0.4);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(244,140,6,0.6)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 1.8rem !important;
+  cursor: pointer;
+}
+.select option {
+  background: #1a0a02;
+  color: #fff8f0;
+}
+
+
+/* ── Footer ───────────────────────────────────────────── */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 1rem 1.6rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.cancelBtn {
+  flex: 1;
+  padding: 0.72rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: rgba(255, 248, 240, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.cancelBtn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff8f0;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.submitBtn {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.72rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #d62828 0%, #e85d04 50%, #f48c06 100%);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 5px 22px rgba(232, 93, 4, 0.42);
+  letter-spacing: 0.01em;
+}
+.submitBtn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18) 0%, transparent 52%);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.submitBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(232, 93, 4, 0.55);
+}
+.submitBtn:active { transform: translateY(0); }

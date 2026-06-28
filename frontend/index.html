@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Last-Minute Life Saver</title>
+  <meta name="description" content="AI-powered productivity engine. Dump your chaotic thoughts and get your single most urgent action — right now." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-start:   #0a0118;
+      --bg-mid:     #0d0530;
+      --bg-end:     #04021a;
+      --accent1:    #7c3aed;
+      --accent2:    #a855f7;
+      --accent3:    #ec4899;
+      --accent4:    #06b6d4;
+      --glass-bg:   rgba(255,255,255,0.05);
+      --glass-border: rgba(255,255,255,0.12);
+      --text-primary: #f8f4ff;
+      --text-muted:   rgba(248,244,255,0.55);
+      --red:        #f43f5e;
+      --green:      #10b981;
+      --yellow:     #f59e0b;
+    }
+
+    html, body {
+      min-height: 100%;
+      font-family: 'Inter', sans-serif;
+      color: var(--text-primary);
+      overflow-x: hidden;
+    }
+
+    body {
+      background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-mid) 50%, var(--bg-end) 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Fluid waves canvas ──────────────────────────────────────────── */
+    #wave-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.35;
+    }
+
+    /* ── Floating orbs ───────────────────────────────────────────────── */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(90px);
+      z-index: 0;
+      animation: orb-drift 18s ease-in-out infinite alternate;
+    }
+    .orb-1 { width: 520px; height: 520px; background: radial-gradient(circle, #7c3aed88, transparent 70%); top: -120px; left: -100px; animation-delay: 0s; }
+    .orb-2 { width: 400px; height: 400px; background: radial-gradient(circle, #ec489944, transparent 70%); bottom: -80px; right: -80px; animation-delay: -6s; }
+    .orb-3 { width: 300px; height: 300px; background: radial-gradient(circle, #06b6d466, transparent 70%); top: 40%; left: 60%; animation-delay: -12s; }
+
+    @keyframes orb-drift {
+      0%   { transform: translate(0, 0) scale(1); }
+      50%  { transform: translate(30px, -40px) scale(1.1); }
+      100% { transform: translate(-20px, 20px) scale(0.95); }
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    .page-wrapper {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      text-align: center;
+      padding-top: 1rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      background: rgba(168,85,247,0.12);
+      border: 1px solid rgba(168,85,247,0.3);
+      border-radius: 999px;
+      padding: 5px 14px;
+      margin-bottom: 1rem;
+    }
+    .badge::before { content: '⚡'; }
+
+    h1 {
+      font-size: clamp(2rem, 6vw, 3.2rem);
+      font-weight: 800;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #e0c3fc 0%, #a855f7 45%, #ec4899 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.7rem;
+    }
+
+    .subtitle {
+      font-size: 1rem;
+      color: var(--text-muted);
+      font-weight: 400;
+      max-width: 480px;
+      line-height: 1.6;
+      margin: 0 auto;
+    }
+
+    /* ── Glass card ──────────────────────────────────────────────────── */
+    .glass-card {
+      width: 100%;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      padding: 2rem;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.04),
+        0 24px 64px rgba(0,0,0,0.5),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+      transition: box-shadow 0.3s ease;
+    }
+    .glass-card:focus-within {
+      box-shadow:
+        0 0 0 1px rgba(168,85,247,0.3),
+        0 24px 64px rgba(0,0,0,0.5),
+        0 0 40px rgba(168,85,247,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+
+    .input-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 0.75rem;
+    }
+
+    #brain-dump {
+      width: 100%;
+      min-height: 170px;
+      resize: vertical;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      color: var(--text-primary);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.97rem;
+      line-height: 1.7;
+      padding: 1rem 1.2rem;
+      outline: none;
+      transition: border-color 0.25s, box-shadow 0.25s;
+      caret-color: var(--accent2);
+    }
+    #brain-dump::placeholder { color: rgba(255,255,255,0.28); }
+    #brain-dump:focus {
+      border-color: rgba(168,85,247,0.55);
+      box-shadow: 0 0 0 3px rgba(168,85,247,0.15);
+    }
+
+    /* ── Execute button ──────────────────────────────────────────────── */
+    #execute-btn {
+      margin-top: 1.25rem;
+      width: 100%;
+      padding: 0.95rem 1.5rem;
+      font-family: 'Inter', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent1) 0%, var(--accent3) 100%);
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.18s, box-shadow 0.18s;
+      box-shadow: 0 4px 24px rgba(124,58,237,0.4);
+    }
+    #execute-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 60%);
+      border-radius: inherit;
+    }
+    #execute-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(124,58,237,0.55);
+    }
+    #execute-btn:active:not(:disabled) { transform: translateY(0); }
+    #execute-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    .btn-content { display: flex; align-items: center; justify-content: center; gap: 10px; position: relative; }
+
+    /* ── Spinner ─────────────────────────────────────────────────────── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .loading .spinner { display: block; }
+    .loading .btn-text::after { content: '…'; animation: ellipsis 1.2s steps(4, end) infinite; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes ellipsis { 0%,20%{content:'.'} 40%{content:'..'} 60%,80%{content:'...'} 100%{content:'.'} }
+
+    /* ── Result card ─────────────────────────────────────────────────── */
+    #result-section {
+      width: 100%;
+      display: none;
+      flex-direction: column;
+      gap: 1rem;
+      animation: fade-up 0.5s ease both;
+    }
+    #result-section.visible { display: flex; }
+
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(22px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent4);
+    }
+    .result-header::before { content: '✦'; font-size: 1rem; }
+
+    .task-name {
+      font-size: clamp(1.3rem, 3vw, 1.9rem);
+      font-weight: 700;
+      line-height: 1.25;
+      background: linear-gradient(120deg, #f0e6ff, #d8b4fe, #f9a8d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Metrics row ─────────────────────────────────────────────────── */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .metric-chip {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-chip::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 2px;
+    }
+    .metric-chip.urgency::before { background: linear-gradient(90deg, var(--red), var(--yellow)); }
+    .metric-chip.time::before    { background: linear-gradient(90deg, var(--accent4), var(--accent2)); }
+
+    .metric-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .metric-value {
+      font-size: 1.8rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .metric-unit { font-size: 0.8rem; font-weight: 400; color: var(--text-muted); margin-left: 3px; }
+
+    /* Urgency bar */
+    .urgency-bar-track {
+      width: 100%;
+      height: 5px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .urgency-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 1s cubic-bezier(0.16,1,0.3,1);
+      background: linear-gradient(90deg, var(--yellow), var(--red));
+    }
+
+    /* ── Micro-action card ───────────────────────────────────────────── */
+    .micro-action-card {
+      background: linear-gradient(135deg, rgba(124,58,237,0.15), rgba(236,72,153,0.1));
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 18px;
+      padding: 1.25rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .micro-action-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: radial-gradient(ellipse at 0% 0%, rgba(168,85,247,0.12), transparent 60%);
+      pointer-events: none;
+    }
+
+    .action-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .action-label::before { content: '▶'; font-size: 0.6rem; }
+
+    #action-text {
+      font-size: 1.05rem;
+      font-weight: 500;
+      line-height: 1.6;
+      color: var(--text-primary);
+    }
+
+    /* ── Error banner ────────────────────────────────────────────────── */
+    #error-banner {
+      display: none;
+      width: 100%;
+      background: rgba(244,63,94,0.12);
+      border: 1px solid rgba(244,63,94,0.3);
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      color: #fda4af;
+      font-size: 0.9rem;
+      animation: fade-up 0.4s ease both;
+    }
+    #error-banner.visible { display: block; }
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    footer {
+      margin-top: 1rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.2);
+    }
+    footer span { color: rgba(168,85,247,0.6); }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 520px) {
+      .glass-card { padding: 1.4rem; }
+      .metrics-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Animated wave canvas -->
+  <canvas id="wave-canvas" aria-hidden="true"></canvas>
+
+  <!-- Ambient orbs -->
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+  <div class="orb orb-3" aria-hidden="true"></div>
+
+  <div class="page-wrapper">
+
+    <!-- Header -->
+    <header>
+      <p class="badge">AI Productivity Engine</p>
+      <h1>Last-Minute Life Saver</h1>
+      <p class="subtitle">Dump your chaotic thoughts. Get your single most urgent action — in seconds.</p>
+    </header>
+
+    <!-- Input glass card -->
+    <div class="glass-card">
+      <label for="brain-dump" class="input-label">🧠 Brain Dump</label>
+      <textarea
+        id="brain-dump"
+        placeholder="Pour everything out here — deadlines, anxieties, half-baked ideas, overdue emails. Don't filter. Just dump it all…"
+        aria-label="Brain dump text area"
+      ></textarea>
+
+      <button id="execute-btn" aria-label="Execute: analyze and get action">
+        <span class="btn-content">
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="btn-text">⚡ Execute</span>
+        </span>
+      </button>
+    </div>
+
+    <!-- Error banner -->
+    <div id="error-banner" role="alert" aria-live="assertive"></div>
+
+    <!-- Result section -->
+    <section id="result-section" aria-label="AI generated action plan">
+      <div class="result-header">Your Mission — Accept It</div>
+
+      <div class="glass-card">
+        <p id="task-name" class="task-name"></p>
+
+        <div class="metrics-row" style="margin-top:1.25rem">
+          <div class="metric-chip urgency">
+            <span class="metric-label">🔥 Urgency</span>
+            <div>
+              <span id="urgency-value" class="metric-value" style="color:#f43f5e">—</span>
+              <span class="metric-unit">/ 10</span>
+            </div>
+            <div class="urgency-bar-track">
+              <div class="urgency-bar-fill" id="urgency-bar" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="metric-chip time">
+            <span class="metric-label">⏱ Est. Time</span>
+            <div>
+              <span id="time-value" class="metric-value" style="color:#06b6d4">—</span>
+              <span class="metric-unit">hrs</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="micro-action-card" style="margin-top:1.25rem">
+          <div class="action-label">Immediate Micro-Action</div>
+          <p id="action-text"></p>
+        </div>
+      </div>
+    </section>
+
+    <footer>Built with <span>Gemini 2.5 Flash</span> · FastAPI · Vanilla JS</footer>
+  </div>
+
+  <script>
+    // ── Wave animation ──────────────────────────────────────────────────────
+    const canvas = document.getElementById('wave-canvas');
+    const ctx = canvas.getContext('2d');
+    let W, H, t = 0;
+
+    function resize() {
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const waves = [
+      { amp: 60, freq: 0.008, speed: 0.012, color: '#7c3aed', y: 0.55 },
+      { amp: 45, freq: 0.010, speed: 0.018, color: '#a855f7', y: 0.62 },
+      { amp: 35, freq: 0.014, speed: 0.010, color: '#ec4899', y: 0.70 },
+      { amp: 50, freq: 0.006, speed: 0.022, color: '#06b6d4', y: 0.48 },
+    ];
+
+    function drawWave(wave, time) {
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      for (let x = 0; x <= W; x += 4) {
+        const y = wave.y * H + Math.sin(x * wave.freq + time * wave.speed * 60) * wave.amp
+                             + Math.sin(x * wave.freq * 1.7 + time * wave.speed * 40) * (wave.amp * 0.4);
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, wave.color + '55');
+      grad.addColorStop(1, wave.color + '00');
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    function animate(ts) {
+      t = ts / 1000;
+      ctx.clearRect(0, 0, W, H);
+      waves.forEach(w => drawWave(w, t));
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    // ── API call ────────────────────────────────────────────────────────────
+    const btn       = document.getElementById('execute-btn');
+    const textarea  = document.getElementById('brain-dump');
+    const resultSec = document.getElementById('result-section');
+    const errBanner = document.getElementById('error-banner');
+
+    function setLoading(on) {
+      btn.disabled = on;
+      btn.querySelector('.btn-content').classList.toggle('loading', on);
+      btn.querySelector('.btn-text').textContent = on ? 'Analyzing' : '⚡ Execute';
+    }
+
+    function showError(msg) {
+      errBanner.textContent = '⚠ ' + msg;
+      errBanner.classList.add('visible');
+    }
+    function clearError() { errBanner.classList.remove('visible'); }
+
+    function animateUrgency(value) {
+      const pct = Math.min(100, (value / 10) * 100);
+      // tiny delay so CSS transition fires
+      setTimeout(() => {
+        document.getElementById('urgency-bar').style.width = pct + '%';
+      }, 80);
+    }
+
+    btn.addEventListener('click', async () => {
+      const input = textarea.value.trim();
+      if (!input) {
+        showError('Please enter some text in the brain dump area first.');
+        return;
+      }
+      clearError();
+      resultSec.classList.remove('visible');
+      setLoading(true);
+
+      try {
+        const res = await fetch('http://localhost:8000/api/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_input: input }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Server error ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        document.getElementById('task-name').textContent    = data.task_name;
+        document.getElementById('urgency-value').textContent = data.urgency_rating.toFixed(1);
+        document.getElementById('time-value').textContent    = data.time_estimate_hours.toFixed(1);
+        document.getElementById('action-text').textContent   = data.immediate_micro_action;
+
+        animateUrgency(data.urgency_rating);
+
+        // Force re-animation
+        resultSec.classList.remove('visible');
+        void resultSec.offsetWidth;
+        resultSec.classList.add('visible');
+
+      } catch (err) {
+        showError(err.message || 'Something went wrong. Is the backend running?');
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    // Allow Ctrl+Enter to submit
+    textarea.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) btn.click();
+    });
+  </script>
+</body>
+</html>

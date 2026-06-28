@@ -1,0 +1,3284 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.gitignore
+AGENTS.md
+backend/main.py
+backend/requirements.txt
+CLAUDE.md
+eslint.config.mjs
+frontend/index.html
+next.config.ts
+package.json
+postcss.config.mjs
+public/file.svg
+public/globe.svg
+public/next.svg
+public/vercel.svg
+public/window.svg
+README.md
+src/app/api/schedule/route.ts
+src/app/components/DeadlineModal.module.css
+src/app/components/DeadlineModal.tsx
+src/app/favicon.ico
+src/app/globals.css
+src/app/layout.tsx
+src/app/page.tsx
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+</file>
+
+<file path="AGENTS.md">
+<!-- BEGIN:nextjs-agent-rules -->
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
+<!-- END:nextjs-agent-rules -->
+</file>
+
+<file path="backend/main.py">
+import os
+import json
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+
+# ── App & CORS ────────────────────────────────────────────────────────────────
+app = FastAPI(title="Last-Minute Life Saver API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],        # open for local dev
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Pydantic schemas ──────────────────────────────────────────────────────────
+class PlanRequest(BaseModel):
+    user_input: str
+
+
+class ActionTask(BaseModel):
+    task_name: str
+    urgency_rating: float
+    time_estimate_hours: float
+    immediate_micro_action: str
+
+
+# ── Serve frontend ───────────────────────────────────────────────────────────
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+@app.get("/app", include_in_schema=False)
+def serve_frontend():
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+# ── Gemini client (reads GEMINI_API_KEY from env) ─────────────────────────────
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+
+SYSTEM_PROMPT = """You are an aggressive, autonomous productivity engine.
+Your job is to analyze chaotic human text, extract the single most urgent task,
+evaluate its deadline proximity on a scale of 1-10, estimate the time required
+to complete it, and determine the exact, immediate micro-action the user must
+take right now to stop procrastinating.
+Output ONLY a valid JSON object with these keys:
+  task_name (string),
+  urgency_rating (float 1-10),
+  time_estimate_hours (float),
+  immediate_micro_action (string)"""
+
+
+# ── Endpoint ──────────────────────────────────────────────────────────────────
+@app.post("/api/plan", response_model=ActionTask)
+async def create_plan(body: PlanRequest) -> ActionTask:
+    if not body.user_input.strip():
+        raise HTTPException(status_code=400, detail="user_input cannot be empty")
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=body.user_input,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+            ),
+        )
+
+        raw_text: str = response.text or ""
+        # Strip markdown fences if the model wraps the JSON
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+
+        data = json.loads(raw_text.strip())
+        return ActionTask(**data)
+
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Gemini returned non-JSON output: {exc}",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Health check ──────────────────────────────────────────────────────────────
+@app.get("/")
+def health():
+    return {"status": "ok", "service": "Last-Minute Life Saver"}
+</file>
+
+<file path="backend/requirements.txt">
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+google-genai>=0.7.0
+pydantic>=2.0.0
+</file>
+
+<file path="CLAUDE.md">
+@AGENTS.md
+</file>
+
+<file path="eslint.config.mjs">
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+
+export default eslintConfig;
+</file>
+
+<file path="frontend/index.html">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Last-Minute Life Saver</title>
+  <meta name="description" content="AI-powered productivity engine. Dump your chaotic thoughts and get your single most urgent action — right now." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-start:   #0a0118;
+      --bg-mid:     #0d0530;
+      --bg-end:     #04021a;
+      --accent1:    #7c3aed;
+      --accent2:    #a855f7;
+      --accent3:    #ec4899;
+      --accent4:    #06b6d4;
+      --glass-bg:   rgba(255,255,255,0.05);
+      --glass-border: rgba(255,255,255,0.12);
+      --text-primary: #f8f4ff;
+      --text-muted:   rgba(248,244,255,0.55);
+      --red:        #f43f5e;
+      --green:      #10b981;
+      --yellow:     #f59e0b;
+    }
+
+    html, body {
+      min-height: 100%;
+      font-family: 'Inter', sans-serif;
+      color: var(--text-primary);
+      overflow-x: hidden;
+    }
+
+    body {
+      background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-mid) 50%, var(--bg-end) 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Fluid waves canvas ──────────────────────────────────────────── */
+    #wave-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.35;
+    }
+
+    /* ── Floating orbs ───────────────────────────────────────────────── */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(90px);
+      z-index: 0;
+      animation: orb-drift 18s ease-in-out infinite alternate;
+    }
+    .orb-1 { width: 520px; height: 520px; background: radial-gradient(circle, #7c3aed88, transparent 70%); top: -120px; left: -100px; animation-delay: 0s; }
+    .orb-2 { width: 400px; height: 400px; background: radial-gradient(circle, #ec489944, transparent 70%); bottom: -80px; right: -80px; animation-delay: -6s; }
+    .orb-3 { width: 300px; height: 300px; background: radial-gradient(circle, #06b6d466, transparent 70%); top: 40%; left: 60%; animation-delay: -12s; }
+
+    @keyframes orb-drift {
+      0%   { transform: translate(0, 0) scale(1); }
+      50%  { transform: translate(30px, -40px) scale(1.1); }
+      100% { transform: translate(-20px, 20px) scale(0.95); }
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    .page-wrapper {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      text-align: center;
+      padding-top: 1rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      background: rgba(168,85,247,0.12);
+      border: 1px solid rgba(168,85,247,0.3);
+      border-radius: 999px;
+      padding: 5px 14px;
+      margin-bottom: 1rem;
+    }
+    .badge::before { content: '⚡'; }
+
+    h1 {
+      font-size: clamp(2rem, 6vw, 3.2rem);
+      font-weight: 800;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #e0c3fc 0%, #a855f7 45%, #ec4899 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.7rem;
+    }
+
+    .subtitle {
+      font-size: 1rem;
+      color: var(--text-muted);
+      font-weight: 400;
+      max-width: 480px;
+      line-height: 1.6;
+      margin: 0 auto;
+    }
+
+    /* ── Glass card ──────────────────────────────────────────────────── */
+    .glass-card {
+      width: 100%;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      padding: 2rem;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.04),
+        0 24px 64px rgba(0,0,0,0.5),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+      transition: box-shadow 0.3s ease;
+    }
+    .glass-card:focus-within {
+      box-shadow:
+        0 0 0 1px rgba(168,85,247,0.3),
+        0 24px 64px rgba(0,0,0,0.5),
+        0 0 40px rgba(168,85,247,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+
+    .input-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 0.75rem;
+    }
+
+    #brain-dump {
+      width: 100%;
+      min-height: 170px;
+      resize: vertical;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      color: var(--text-primary);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.97rem;
+      line-height: 1.7;
+      padding: 1rem 1.2rem;
+      outline: none;
+      transition: border-color 0.25s, box-shadow 0.25s;
+      caret-color: var(--accent2);
+    }
+    #brain-dump::placeholder { color: rgba(255,255,255,0.28); }
+    #brain-dump:focus {
+      border-color: rgba(168,85,247,0.55);
+      box-shadow: 0 0 0 3px rgba(168,85,247,0.15);
+    }
+
+    /* ── Execute button ──────────────────────────────────────────────── */
+    #execute-btn {
+      margin-top: 1.25rem;
+      width: 100%;
+      padding: 0.95rem 1.5rem;
+      font-family: 'Inter', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent1) 0%, var(--accent3) 100%);
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.18s, box-shadow 0.18s;
+      box-shadow: 0 4px 24px rgba(124,58,237,0.4);
+    }
+    #execute-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 60%);
+      border-radius: inherit;
+    }
+    #execute-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(124,58,237,0.55);
+    }
+    #execute-btn:active:not(:disabled) { transform: translateY(0); }
+    #execute-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    .btn-content { display: flex; align-items: center; justify-content: center; gap: 10px; position: relative; }
+
+    /* ── Spinner ─────────────────────────────────────────────────────── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .loading .spinner { display: block; }
+    .loading .btn-text::after { content: '…'; animation: ellipsis 1.2s steps(4, end) infinite; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes ellipsis { 0%,20%{content:'.'} 40%{content:'..'} 60%,80%{content:'...'} 100%{content:'.'} }
+
+    /* ── Result card ─────────────────────────────────────────────────── */
+    #result-section {
+      width: 100%;
+      display: none;
+      flex-direction: column;
+      gap: 1rem;
+      animation: fade-up 0.5s ease both;
+    }
+    #result-section.visible { display: flex; }
+
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(22px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent4);
+    }
+    .result-header::before { content: '✦'; font-size: 1rem; }
+
+    .task-name {
+      font-size: clamp(1.3rem, 3vw, 1.9rem);
+      font-weight: 700;
+      line-height: 1.25;
+      background: linear-gradient(120deg, #f0e6ff, #d8b4fe, #f9a8d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Metrics row ─────────────────────────────────────────────────── */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .metric-chip {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-chip::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 2px;
+    }
+    .metric-chip.urgency::before { background: linear-gradient(90deg, var(--red), var(--yellow)); }
+    .metric-chip.time::before    { background: linear-gradient(90deg, var(--accent4), var(--accent2)); }
+
+    .metric-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .metric-value {
+      font-size: 1.8rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .metric-unit { font-size: 0.8rem; font-weight: 400; color: var(--text-muted); margin-left: 3px; }
+
+    /* Urgency bar */
+    .urgency-bar-track {
+      width: 100%;
+      height: 5px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .urgency-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 1s cubic-bezier(0.16,1,0.3,1);
+      background: linear-gradient(90deg, var(--yellow), var(--red));
+    }
+
+    /* ── Micro-action card ───────────────────────────────────────────── */
+    .micro-action-card {
+      background: linear-gradient(135deg, rgba(124,58,237,0.15), rgba(236,72,153,0.1));
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 18px;
+      padding: 1.25rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .micro-action-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: radial-gradient(ellipse at 0% 0%, rgba(168,85,247,0.12), transparent 60%);
+      pointer-events: none;
+    }
+
+    .action-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .action-label::before { content: '▶'; font-size: 0.6rem; }
+
+    #action-text {
+      font-size: 1.05rem;
+      font-weight: 500;
+      line-height: 1.6;
+      color: var(--text-primary);
+    }
+
+    /* ── Error banner ────────────────────────────────────────────────── */
+    #error-banner {
+      display: none;
+      width: 100%;
+      background: rgba(244,63,94,0.12);
+      border: 1px solid rgba(244,63,94,0.3);
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      color: #fda4af;
+      font-size: 0.9rem;
+      animation: fade-up 0.4s ease both;
+    }
+    #error-banner.visible { display: block; }
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    footer {
+      margin-top: 1rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.2);
+    }
+    footer span { color: rgba(168,85,247,0.6); }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 520px) {
+      .glass-card { padding: 1.4rem; }
+      .metrics-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Animated wave canvas -->
+  <canvas id="wave-canvas" aria-hidden="true"></canvas>
+
+  <!-- Ambient orbs -->
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+  <div class="orb orb-3" aria-hidden="true"></div>
+
+  <div class="page-wrapper">
+
+    <!-- Header -->
+    <header>
+      <p class="badge">AI Productivity Engine</p>
+      <h1>Last-Minute Life Saver</h1>
+      <p class="subtitle">Dump your chaotic thoughts. Get your single most urgent action — in seconds.</p>
+    </header>
+
+    <!-- Input glass card -->
+    <div class="glass-card">
+      <label for="brain-dump" class="input-label">🧠 Brain Dump</label>
+      <textarea
+        id="brain-dump"
+        placeholder="Pour everything out here — deadlines, anxieties, half-baked ideas, overdue emails. Don't filter. Just dump it all…"
+        aria-label="Brain dump text area"
+      ></textarea>
+
+      <button id="execute-btn" aria-label="Execute: analyze and get action">
+        <span class="btn-content">
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="btn-text">⚡ Execute</span>
+        </span>
+      </button>
+    </div>
+
+    <!-- Error banner -->
+    <div id="error-banner" role="alert" aria-live="assertive"></div>
+
+    <!-- Result section -->
+    <section id="result-section" aria-label="AI generated action plan">
+      <div class="result-header">Your Mission — Accept It</div>
+
+      <div class="glass-card">
+        <p id="task-name" class="task-name"></p>
+
+        <div class="metrics-row" style="margin-top:1.25rem">
+          <div class="metric-chip urgency">
+            <span class="metric-label">🔥 Urgency</span>
+            <div>
+              <span id="urgency-value" class="metric-value" style="color:#f43f5e">—</span>
+              <span class="metric-unit">/ 10</span>
+            </div>
+            <div class="urgency-bar-track">
+              <div class="urgency-bar-fill" id="urgency-bar" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="metric-chip time">
+            <span class="metric-label">⏱ Est. Time</span>
+            <div>
+              <span id="time-value" class="metric-value" style="color:#06b6d4">—</span>
+              <span class="metric-unit">hrs</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="micro-action-card" style="margin-top:1.25rem">
+          <div class="action-label">Immediate Micro-Action</div>
+          <p id="action-text"></p>
+        </div>
+      </div>
+    </section>
+
+    <footer>Built with <span>Gemini 2.5 Flash</span> · FastAPI · Vanilla JS</footer>
+  </div>
+
+  <script>
+    // ── Wave animation ──────────────────────────────────────────────────────
+    const canvas = document.getElementById('wave-canvas');
+    const ctx = canvas.getContext('2d');
+    let W, H, t = 0;
+
+    function resize() {
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const waves = [
+      { amp: 60, freq: 0.008, speed: 0.012, color: '#7c3aed', y: 0.55 },
+      { amp: 45, freq: 0.010, speed: 0.018, color: '#a855f7', y: 0.62 },
+      { amp: 35, freq: 0.014, speed: 0.010, color: '#ec4899', y: 0.70 },
+      { amp: 50, freq: 0.006, speed: 0.022, color: '#06b6d4', y: 0.48 },
+    ];
+
+    function drawWave(wave, time) {
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      for (let x = 0; x <= W; x += 4) {
+        const y = wave.y * H + Math.sin(x * wave.freq + time * wave.speed * 60) * wave.amp
+                             + Math.sin(x * wave.freq * 1.7 + time * wave.speed * 40) * (wave.amp * 0.4);
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, wave.color + '55');
+      grad.addColorStop(1, wave.color + '00');
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    function animate(ts) {
+      t = ts / 1000;
+      ctx.clearRect(0, 0, W, H);
+      waves.forEach(w => drawWave(w, t));
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    // ── API call ────────────────────────────────────────────────────────────
+    const btn       = document.getElementById('execute-btn');
+    const textarea  = document.getElementById('brain-dump');
+    const resultSec = document.getElementById('result-section');
+    const errBanner = document.getElementById('error-banner');
+
+    function setLoading(on) {
+      btn.disabled = on;
+      btn.querySelector('.btn-content').classList.toggle('loading', on);
+      btn.querySelector('.btn-text').textContent = on ? 'Analyzing' : '⚡ Execute';
+    }
+
+    function showError(msg) {
+      errBanner.textContent = '⚠ ' + msg;
+      errBanner.classList.add('visible');
+    }
+    function clearError() { errBanner.classList.remove('visible'); }
+
+    function animateUrgency(value) {
+      const pct = Math.min(100, (value / 10) * 100);
+      // tiny delay so CSS transition fires
+      setTimeout(() => {
+        document.getElementById('urgency-bar').style.width = pct + '%';
+      }, 80);
+    }
+
+    btn.addEventListener('click', async () => {
+      const input = textarea.value.trim();
+      if (!input) {
+        showError('Please enter some text in the brain dump area first.');
+        return;
+      }
+      clearError();
+      resultSec.classList.remove('visible');
+      setLoading(true);
+
+      try {
+        const res = await fetch('http://localhost:8000/api/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_input: input }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Server error ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        document.getElementById('task-name').textContent    = data.task_name;
+        document.getElementById('urgency-value').textContent = data.urgency_rating.toFixed(1);
+        document.getElementById('time-value').textContent    = data.time_estimate_hours.toFixed(1);
+        document.getElementById('action-text').textContent   = data.immediate_micro_action;
+
+        animateUrgency(data.urgency_rating);
+
+        // Force re-animation
+        resultSec.classList.remove('visible');
+        void resultSec.offsetWidth;
+        resultSec.classList.add('visible');
+
+      } catch (err) {
+        showError(err.message || 'Something went wrong. Is the backend running?');
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    // Allow Ctrl+Enter to submit
+    textarea.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) btn.click();
+    });
+  </script>
+</body>
+</html>
+</file>
+
+<file path="next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+</file>
+
+<file path="package.json">
+{
+  "name": "vibe2ship-temp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@fullcalendar/daygrid": "^6.1.21",
+    "@fullcalendar/interaction": "^6.1.21",
+    "@fullcalendar/react": "^6.1.21",
+    "@fullcalendar/timegrid": "^6.1.21",
+    "@google/genai": "^2.10.0",
+    "lucide-react": "^1.21.0",
+    "next": "16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+</file>
+
+<file path="postcss.config.mjs">
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+
+export default config;
+</file>
+
+<file path="public/file.svg">
+<svg fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 13.5V5.41a1 1 0 0 0-.3-.7L9.8.29A1 1 0 0 0 9.08 0H1.5v13.5A2.5 2.5 0 0 0 4 16h8a2.5 2.5 0 0 0 2.5-2.5m-1.5 0v-7H8v-5H3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1M9.5 5V2.12L12.38 5zM5.13 5h-.62v1.25h2.12V5zm-.62 3h7.12v1.25H4.5zm.62 3h-.62v1.25h7.12V11z" clip-rule="evenodd" fill="#666" fill-rule="evenodd"/></svg>
+</file>
+
+<file path="public/globe.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g clip-path="url(#a)"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.27 14.1a6.5 6.5 0 0 0 3.67-3.45q-1.24.21-2.7.34-.31 1.83-.97 3.1M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.48-1.52a7 7 0 0 1-.96 0H7.5a4 4 0 0 1-.84-1.32q-.38-.89-.63-2.08a40 40 0 0 0 3.92 0q-.25 1.2-.63 2.08a4 4 0 0 1-.84 1.31zm2.94-4.76q1.66-.15 2.95-.43a7 7 0 0 0 0-2.58q-1.3-.27-2.95-.43a18 18 0 0 1 0 3.44m-1.27-3.54a17 17 0 0 1 0 3.64 39 39 0 0 1-4.3 0 17 17 0 0 1 0-3.64 39 39 0 0 1 4.3 0m1.1-1.17q1.45.13 2.69.34a6.5 6.5 0 0 0-3.67-3.44q.65 1.26.98 3.1M8.48 1.5l.01.02q.41.37.84 1.31.38.89.63 2.08a40 40 0 0 0-3.92 0q.25-1.2.63-2.08a4 4 0 0 1 .85-1.32 7 7 0 0 1 .96 0m-2.75.4a6.5 6.5 0 0 0-3.67 3.44 29 29 0 0 1 2.7-.34q.31-1.83.97-3.1M4.58 6.28q-1.66.16-2.95.43a7 7 0 0 0 0 2.58q1.3.27 2.95.43a18 18 0 0 1 0-3.44m.17 4.71q-1.45-.12-2.69-.34a6.5 6.5 0 0 0 3.67 3.44q-.65-1.27-.98-3.1" fill="#666"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h16v16H0z"/></clipPath></defs></svg>
+</file>
+
+<file path="public/next.svg">
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 394 80"><path fill="#000" d="M262 0h68.5v12.7h-27.2v66.6h-13.6V12.7H262V0ZM149 0v12.7H94v20.4h44.3v12.6H94v21h55v12.6H80.5V0h68.7zm34.3 0h-17.8l63.8 79.4h17.9l-32-39.7 32-39.6h-17.9l-23 28.6-23-28.6zm18.3 56.7-9-11-27.1 33.7h17.8l18.3-22.7z"/><path fill="#000" d="M81 79.3 17 0H0v79.3h13.6V17l50.2 62.3H81Zm252.6-.4c-1 0-1.8-.4-2.5-1s-1.1-1.6-1.1-2.6.3-1.8 1-2.5 1.6-1 2.6-1 1.8.3 2.5 1a3.4 3.4 0 0 1 .6 4.3 3.7 3.7 0 0 1-3 1.8zm23.2-33.5h6v23.3c0 2.1-.4 4-1.3 5.5a9.1 9.1 0 0 1-3.8 3.5c-1.6.8-3.5 1.3-5.7 1.3-2 0-3.7-.4-5.3-1s-2.8-1.8-3.7-3.2c-.9-1.3-1.4-3-1.4-5h6c.1.8.3 1.6.7 2.2s1 1.2 1.6 1.5c.7.4 1.5.5 2.4.5 1 0 1.8-.2 2.4-.6a4 4 0 0 0 1.6-1.8c.3-.8.5-1.8.5-3V45.5zm30.9 9.1a4.4 4.4 0 0 0-2-3.3 7.5 7.5 0 0 0-4.3-1.1c-1.3 0-2.4.2-3.3.5-.9.4-1.6 1-2 1.6a3.5 3.5 0 0 0-.3 4c.3.5.7.9 1.3 1.2l1.8 1 2 .5 3.2.8c1.3.3 2.5.7 3.7 1.2a13 13 0 0 1 3.2 1.8 8.1 8.1 0 0 1 3 6.5c0 2-.5 3.7-1.5 5.1a10 10 0 0 1-4.4 3.5c-1.8.8-4.1 1.2-6.8 1.2-2.6 0-4.9-.4-6.8-1.2-2-.8-3.4-2-4.5-3.5a10 10 0 0 1-1.7-5.6h6a5 5 0 0 0 3.5 4.6c1 .4 2.2.6 3.4.6 1.3 0 2.5-.2 3.5-.6 1-.4 1.8-1 2.4-1.7a4 4 0 0 0 .8-2.4c0-.9-.2-1.6-.7-2.2a11 11 0 0 0-2.1-1.4l-3.2-1-3.8-1c-2.8-.7-5-1.7-6.6-3.2a7.2 7.2 0 0 1-2.4-5.7 8 8 0 0 1 1.7-5 10 10 0 0 1 4.3-3.5c2-.8 4-1.2 6.4-1.2 2.3 0 4.4.4 6.2 1.2 1.8.8 3.2 2 4.3 3.4 1 1.4 1.5 3 1.5 5h-5.8z"/></svg>
+</file>
+
+<file path="public/vercel.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+</file>
+
+<file path="public/window.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
+</file>
+
+<file path="README.md">
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</file>
+
+<file path="src/app/api/schedule/route.ts">
+import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+
+function buildSystemPrompt(workStart: string, workEnd: string, timeframeHours: number): string {
+  return `You are an elite, stress-reducing scheduling assistant.
+You receive an array of CRM task names and must create a realistic, focused schedule for completing them.
+
+Rules:
+- Break each task into one or more 45-minute focus blocks
+- Leave exactly a 15-minute gap between every block
+- Only schedule between ${workStart} and ${workEnd} local time — NEVER outside this window
+- Spread work across the next ${timeframeHours} hours starting from right now
+- Assign a distinct, vibrant hex background color to each unique task
+
+You MUST return ONLY a valid JSON array — no markdown, no explanation, no wrapper object.
+Each element in the array must match this exact shape:
+{
+  "title": string,
+  "start": string (ISO 8601 with timezone offset, e.g. "2025-01-15T09:00:00+05:30"),
+  "end": string (ISO 8601, exactly 45 minutes after start),
+  "backgroundColor": string (hex color, e.g. "#e85d04")
+}`;
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const tasks: string[] = body.tasks ?? [];
+    const workStart: string = body.workStart ?? "09:00";
+    const workEnd: string = body.workEnd ?? "18:00";
+    const timeframeHours: number = Number(body.timeframeHours) || 48;
+
+    if (!tasks.length) {
+      return NextResponse.json({ error: "No tasks provided" }, { status: 400 });
+    }
+
+    // Build a timestamp anchor so the model knows "now"
+    const now = new Date().toISOString();
+    const userMessage = `Current UTC time: ${now}\n\nWork window: ${workStart} to ${workEnd}\nScheduling timeframe: next ${timeframeHours} hours\n\nCRM Tasks to schedule:\n${tasks
+      .map((t, i) => `${i + 1}. ${t}`)
+      .join("\n")}`;
+
+    const systemPrompt = buildSystemPrompt(workStart, workEnd, timeframeHours);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: userMessage,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+      },
+    });
+
+    let raw = response.text ?? "";
+
+    // Strip markdown fences if present
+    if (raw.startsWith("```")) {
+      raw = raw.replace(/^```(?:json)?\n?/, "").replace(/```$/, "").trim();
+    }
+
+    const events = JSON.parse(raw);
+    return NextResponse.json(events);
+  } catch (err: unknown) {
+    console.error("[schedule/route]", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+</file>
+
+<file path="src/app/components/DeadlineModal.module.css">
+/* ════════════════════════════════════════════════════════
+   DeadlineModal — CSS Module
+   ════════════════════════════════════════════════════════ */
+
+/* ── Backdrop ─────────────────────────────────────────── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.70);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 100;
+  animation: backdropIn 0.22s ease both;
+}
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Drawer panel ─────────────────────────────────────── */
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 500px;
+  max-width: 96vw;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg,
+      rgba(22, 8, 2, 0.98) 0%,
+      rgba(12, 4, 1, 0.99) 100%);
+  border-left: 1px solid rgba(232, 93, 4, 0.18);
+  box-shadow:
+    -2px 0 0 rgba(232, 93, 4, 0.1),
+    -32px 0 80px rgba(0, 0, 0, 0.75);
+  animation: panelIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+@keyframes panelIn {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+/* ── Top accent bar ───────────────────────────────────── */
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #d62828, #e85d04, #f48c06, #ffba08);
+  z-index: 1;
+}
+
+/* ── Header ───────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.4rem 1.6rem 1.1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 0;
+}
+
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.titleIcon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #d62828 0%, #e85d04 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 6px 18px rgba(232, 93, 4, 0.45);
+}
+
+.titleText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.titleMain {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff8f0;
+  line-height: 1.2;
+}
+
+.titleSub {
+  font-size: 0.72rem;
+  color: rgba(255, 248, 240, 0.4);
+  font-weight: 500;
+}
+
+.closeBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 248, 240, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+.closeBtn:hover {
+  background: rgba(214, 40, 40, 0.16);
+  border-color: rgba(214, 40, 40, 0.4);
+  color: #fca5a5;
+  transform: scale(1.06);
+}
+
+/* ── Scrollable body ──────────────────────────────────── */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.4rem 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 93, 4, 0.25) transparent;
+}
+
+/* ── Field wrapper ────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 248, 240, 0.45);
+}
+
+.required {
+  color: #e85d04;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+/* ── Inputs ───────────────────────────────────────────── */
+.input {
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: #fff8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  color-scheme: dark;
+}
+.input::placeholder { color: rgba(255, 248, 240, 0.2); }
+.input:focus {
+  border-color: rgba(232, 93, 4, 0.55);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.12);
+}
+.inputError {
+  border-color: rgba(214, 40, 40, 0.6) !important;
+  box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.1) !important;
+}
+.inputSm {
+  padding: 0.48rem 0.7rem;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
+
+.textarea {
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: #fff8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.65;
+  outline: none;
+  resize: vertical;
+  min-height: 84px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  color-scheme: dark;
+}
+.textarea::placeholder { color: rgba(255, 248, 240, 0.2); }
+.textarea:focus {
+  border-color: rgba(232, 93, 4, 0.55);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.1);
+}
+
+.errorMsg {
+  font-size: 0.7rem;
+  color: #f87171;
+  font-weight: 500;
+}
+
+/* ── Date + Time row ──────────────────────────────────── */
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+
+/* ── Divider ──────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0.25rem 0;
+}
+
+/* ── Reminders section ────────────────────────────────── */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.1rem;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #fff8f0;
+}
+
+.reminderCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: rgba(232, 93, 4, 0.22);
+  border: 1px solid rgba(232, 93, 4, 0.4);
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #f48c06;
+}
+
+.addReminderBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.38rem 0.85rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #f48c06;
+  background: rgba(244, 140, 6, 0.1);
+  border: 1px solid rgba(244, 140, 6, 0.28);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  letter-spacing: 0.02em;
+}
+.addReminderBtn:hover {
+  background: rgba(244, 140, 6, 0.2);
+  border-color: rgba(244, 140, 6, 0.5);
+  transform: translateY(-1px);
+}
+
+.emptyHint {
+  text-align: center;
+  font-size: 0.78rem;
+  color: rgba(255, 248, 240, 0.22);
+  font-style: italic;
+  padding: 0.75rem 0 0.25rem;
+}
+
+/* ── Reminder list ────────────────────────────────────── */
+.reminderList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.reminderCard {
+  position: relative;
+  padding: 1rem 1rem 0.85rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  animation: cardIn 0.22s ease both;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reminderCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reminderNum {
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: rgba(232, 93, 4, 0.7);
+  text-transform: uppercase;
+}
+
+.deleteBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(214, 40, 40, 0.18);
+  background: rgba(214, 40, 40, 0.07);
+  color: rgba(248, 113, 113, 0.5);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.deleteBtn:hover {
+  background: rgba(214, 40, 40, 0.22);
+  border-color: rgba(214, 40, 40, 0.45);
+  color: #f87171;
+  transform: scale(1.08);
+}
+
+/* ── Type pills ───────────────────────────────────────── */
+.pillGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.28rem 0.65rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(255, 248, 240, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  line-height: 1;
+}
+.pill:hover {
+  background: rgba(232, 93, 4, 0.1);
+  border-color: rgba(232, 93, 4, 0.28);
+  color: #f48c06;
+}
+.pillActive {
+  background: rgba(232, 93, 4, 0.18);
+  border-color: rgba(232, 93, 4, 0.5);
+  color: #f48c06;
+  box-shadow: 0 0 12px rgba(232, 93, 4, 0.14);
+}
+
+/* ── Reminder date/time pickers ───────────────────────── */
+.reminderPickers {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.recurLabel {
+  font-size: 0.76rem;
+  color: rgba(255, 248, 240, 0.4);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(244,140,6,0.6)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 1.8rem !important;
+  cursor: pointer;
+}
+.select option {
+  background: #1a0a02;
+  color: #fff8f0;
+}
+
+
+/* ── Footer ───────────────────────────────────────────── */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 1rem 1.6rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.cancelBtn {
+  flex: 1;
+  padding: 0.72rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: rgba(255, 248, 240, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.cancelBtn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff8f0;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.submitBtn {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.72rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #d62828 0%, #e85d04 50%, #f48c06 100%);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 5px 22px rgba(232, 93, 4, 0.42);
+  letter-spacing: 0.01em;
+}
+.submitBtn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18) 0%, transparent 52%);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.submitBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(232, 93, 4, 0.55);
+}
+.submitBtn:active { transform: translateY(0); }
+</file>
+
+<file path="src/app/components/DeadlineModal.tsx">
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { X, Plus, Trash2, Bell, Clock, AlignLeft, Tag } from "lucide-react";
+import s from "./DeadlineModal.module.css";
+
+// ── Types ─────────────────────────────────────────────────────────────────
+export type RecurrenceType = "once" | "daily" | "weekly" | "monthly" | "yearly";
+
+export interface Reminder {
+  id: string;
+  type: RecurrenceType;
+  /** one-time: full date string */
+  date: string;
+  /** all types: HH:MM */
+  time: string;
+  /** weekly: 0=Sun … 6=Sat */
+  dayOfWeek: number;
+  /** monthly: 1–31 */
+  dayOfMonth: number;
+  /** yearly: month index 0–11 */
+  month: number;
+  /** yearly: day 1–31 */
+  yearDay: number;
+}
+
+export interface DeadlineFormData {
+  name: string;
+  description: string;
+  date: string;
+  time: string;
+  reminders: Reminder[];
+}
+
+interface Props {
+  isOpen: boolean;
+  prefillDate?: string;
+  prefillTime?: string;
+  onClose: () => void;
+  onSubmit: (data: DeadlineFormData) => void;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const uid = () => `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+const todayDate = () => new Date().toISOString().slice(0, 10);
+const nowTime   = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+};
+
+const RECURRENCE: { value: RecurrenceType; label: string; icon: string }[] = [
+  { value: "once",    label: "One-time",  icon: "🔔" },
+  { value: "daily",   label: "Daily",     icon: "📅" },
+  { value: "weekly",  label: "Weekly",    icon: "🗓️" },
+  { value: "monthly", label: "Monthly",   icon: "📆" },
+  { value: "yearly",  label: "Yearly",    icon: "🎯" },
+];
+
+const DAYS_OF_WEEK = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const MONTHS       = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function daysInMonth(month: number) {
+  // Use a non-leap year as default; enough for the picker
+  return new Date(2001, month + 1, 0).getDate();
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+export default function DeadlineModal({ isOpen, prefillDate, prefillTime, onClose, onSubmit }: Props) {
+  const [name,        setName]        = useState("");
+  const [description, setDescription] = useState("");
+  const [date,        setDate]        = useState(todayDate());
+  const [time,        setTime]        = useState(nowTime());
+  const [reminders,   setReminders]   = useState<Reminder[]>([]);
+  const [errors,      setErrors]      = useState<Record<string, string>>({});
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // Reset form when opened
+  useEffect(() => {
+    if (!isOpen) return;
+    setName("");
+    setDescription("");
+    setDate(prefillDate ?? todayDate());
+    setTime(prefillTime ?? nowTime());
+    setReminders([]);
+    setErrors({});
+    setTimeout(() => nameRef.current?.focus(), 80);
+  }, [isOpen, prefillDate, prefillTime]);
+
+  // Escape to close
+  useEffect(() => {
+    if (!isOpen) return;
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [isOpen, onClose]);
+
+  const addReminder = useCallback(() =>
+    setReminders(p => [...p, {
+      id: uid(), type: "once",
+      date: todayDate(), time: nowTime(),
+      dayOfWeek: 1, dayOfMonth: 1, month: 0, yearDay: 1,
+    }])
+  , []);
+
+  const removeReminder = useCallback((id: string) =>
+    setReminders(p => p.filter(r => r.id !== id))
+  , []);
+
+  const updateReminder = useCallback((id: string, patch: Partial<Reminder>) =>
+    setReminders(p => p.map(r => r.id === id ? { ...r, ...patch } : r))
+  , []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const errs: Record<string, string> = {};
+    if (!name.trim()) errs.name = "Task name is required";
+    if (!date)        errs.date = "Date is required";
+    if (!time)        errs.time = "Time is required";
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    onSubmit({ name: name.trim(), description: description.trim(), date, time, reminders });
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className={s.backdrop} onClick={onClose} aria-hidden="true" />
+
+      {/* Drawer */}
+      <div className={s.panel} role="dialog" aria-modal="true" aria-label="Add Deadline">
+
+        {/* ── Header ── */}
+        <div className={s.header}>
+          <div className={s.titleGroup}>
+            <div className={s.titleIcon}>
+              <Clock size={17} />
+            </div>
+            <div className={s.titleText}>
+              <span className={s.titleMain}>Add Deadline</span>
+              <span className={s.titleSub}>Block time · Set reminders</span>
+            </div>
+          </div>
+          <button className={s.closeBtn} onClick={onClose} aria-label="Close panel">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* ── Form ── */}
+        <form onSubmit={handleSubmit} noValidate style={{ display: "contents" }}>
+          <div className={s.body}>
+
+            {/* Task Name */}
+            <div className={s.field}>
+              <label htmlFor="dl-name" className={s.label}>
+                <Tag size={11} />
+                Task Name
+                <span className={s.required}>*</span>
+              </label>
+              <input
+                ref={nameRef}
+                id="dl-name"
+                type="text"
+                className={`${s.input}${errors.name ? ` ${s.inputError}` : ""}`}
+                placeholder="e.g. Submit quarterly report"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                maxLength={120}
+              />
+              {errors.name && <span className={s.errorMsg}>{errors.name}</span>}
+            </div>
+
+            {/* Description */}
+            <div className={s.field}>
+              <label htmlFor="dl-desc" className={s.label}>
+                <AlignLeft size={11} />
+                Description
+              </label>
+              <textarea
+                id="dl-desc"
+                className={s.textarea}
+                placeholder="Optional notes or context…"
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                rows={3}
+                maxLength={500}
+              />
+            </div>
+
+            {/* Date + Time */}
+            <div className={s.row}>
+              <div className={s.field}>
+                <label htmlFor="dl-date" className={s.label}>
+                  📅 Date<span className={s.required}>*</span>
+                </label>
+                <input
+                  id="dl-date"
+                  type="date"
+                  className={`${s.input}${errors.date ? ` ${s.inputError}` : ""}`}
+                  value={date}
+                  onChange={e => setDate(e.target.value)}
+                />
+                {errors.date && <span className={s.errorMsg}>{errors.date}</span>}
+              </div>
+              <div className={s.field}>
+                <label htmlFor="dl-time" className={s.label}>
+                  🕐 Time<span className={s.required}>*</span>
+                </label>
+                <input
+                  id="dl-time"
+                  type="time"
+                  className={`${s.input}${errors.time ? ` ${s.inputError}` : ""}`}
+                  value={time}
+                  onChange={e => setTime(e.target.value)}
+                />
+                {errors.time && <span className={s.errorMsg}>{errors.time}</span>}
+              </div>
+            </div>
+
+            <div className={s.divider} />
+
+            {/* ── Reminders ── */}
+            <div>
+              <div className={s.sectionHeader}>
+                <div className={s.sectionTitle}>
+                  <Bell size={14} color="#f48c06" />
+                  Reminders
+                  {reminders.length > 0 && (
+                    <span className={s.reminderCount}>{reminders.length}</span>
+                  )}
+                </div>
+                <button type="button" className={s.addReminderBtn} onClick={addReminder}>
+                  <Plus size={12} />
+                  Add Reminder
+                </button>
+              </div>
+
+              {reminders.length === 0 ? (
+                <p className={s.emptyHint}>No reminders yet — click "+ Add Reminder" to schedule one.</p>
+              ) : (
+                <div className={s.reminderList}>
+                  {reminders.map((r, i) => (
+                    <div key={r.id} className={s.reminderCard}>
+                      <div className={s.reminderCardHeader}>
+                        <span className={s.reminderNum}>Reminder {i + 1}</span>
+                        <button
+                          type="button"
+                          className={s.deleteBtn}
+                          onClick={() => removeReminder(r.id)}
+                          aria-label="Delete reminder"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+
+                      {/* Type pills */}
+                      <div className={s.pillGroup}>
+                        {RECURRENCE.map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className={`${s.pill}${r.type === opt.value ? ` ${s.pillActive}` : ""}`}
+                            onClick={() => updateReminder(r.id, { type: opt.value })}
+                          >
+                            <span>{opt.icon}</span>
+                            <span>{opt.label}</span>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* ── Context-aware pickers ── */}
+
+                      {/* ONE-TIME */}
+                      {r.type === "once" && (
+                        <div className={s.reminderPickers}>
+                          <input type="date" className={`${s.input} ${s.inputSm}`}
+                            value={r.date} onChange={e => updateReminder(r.id, { date: e.target.value })}
+                            aria-label="Reminder date" />
+                          <input type="time" className={`${s.input} ${s.inputSm}`}
+                            value={r.time} onChange={e => updateReminder(r.id, { time: e.target.value })}
+                            aria-label="Reminder time" />
+                        </div>
+                      )}
+
+                      {/* DAILY */}
+                      {r.type === "daily" && (
+                        <div className={s.reminderPickers}>
+                          <span className={s.recurLabel}>Every day at</span>
+                          <input type="time" className={`${s.input} ${s.inputSm}`}
+                            value={r.time} onChange={e => updateReminder(r.id, { time: e.target.value })}
+                            aria-label="Reminder time" />
+                        </div>
+                      )}
+
+                      {/* WEEKLY — day of week + time */}
+                      {r.type === "weekly" && (
+                        <div className={s.reminderPickers}>
+                          <span className={s.recurLabel}>Every</span>
+                          <select
+                            className={`${s.input} ${s.inputSm} ${s.select}`}
+                            value={r.dayOfWeek}
+                            onChange={e => updateReminder(r.id, { dayOfWeek: Number(e.target.value) })}
+                            aria-label="Day of week"
+                          >
+                            {DAYS_OF_WEEK.map((d, i) => (
+                              <option key={d} value={i}>{d}</option>
+                            ))}
+                          </select>
+                          <span className={s.recurLabel}>at</span>
+                          <input type="time" className={`${s.input} ${s.inputSm}`}
+                            value={r.time} onChange={e => updateReminder(r.id, { time: e.target.value })}
+                            aria-label="Reminder time" />
+                        </div>
+                      )}
+
+                      {/* MONTHLY — day of month + time */}
+                      {r.type === "monthly" && (
+                        <div className={s.reminderPickers}>
+                          <span className={s.recurLabel}>On the</span>
+                          <select
+                            className={`${s.input} ${s.inputSm} ${s.select}`}
+                            value={r.dayOfMonth}
+                            onChange={e => updateReminder(r.id, { dayOfMonth: Number(e.target.value) })}
+                            aria-label="Day of month"
+                          >
+                            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                              <option key={d} value={d}>
+                                {d}{d === 1 ? "st" : d === 2 ? "nd" : d === 3 ? "rd" : "th"}
+                              </option>
+                            ))}
+                          </select>
+                          <span className={s.recurLabel}>at</span>
+                          <input type="time" className={`${s.input} ${s.inputSm}`}
+                            value={r.time} onChange={e => updateReminder(r.id, { time: e.target.value })}
+                            aria-label="Reminder time" />
+                        </div>
+                      )}
+
+                      {/* YEARLY — month + day + time */}
+                      {r.type === "yearly" && (
+                        <div className={s.reminderPickers} style={{ flexWrap: "wrap" }}>
+                          <span className={s.recurLabel}>Every</span>
+                          <select
+                            className={`${s.input} ${s.inputSm} ${s.select}`}
+                            value={r.month}
+                            onChange={e => updateReminder(r.id, { month: Number(e.target.value), yearDay: 1 })}
+                            aria-label="Month"
+                          >
+                            {MONTHS.map((m, i) => (
+                              <option key={m} value={i}>{m}</option>
+                            ))}
+                          </select>
+                          <select
+                            className={`${s.input} ${s.inputSm} ${s.select}`}
+                            value={r.yearDay}
+                            onChange={e => updateReminder(r.id, { yearDay: Number(e.target.value) })}
+                            aria-label="Day of month"
+                          >
+                            {Array.from({ length: daysInMonth(r.month) }, (_, i) => i + 1).map(d => (
+                              <option key={d} value={d}>
+                                {d}{d === 1 ? "st" : d === 2 ? "nd" : d === 3 ? "rd" : "th"}
+                              </option>
+                            ))}
+                          </select>
+                          <span className={s.recurLabel}>at</span>
+                          <input type="time" className={`${s.input} ${s.inputSm}`}
+                            value={r.time} onChange={e => updateReminder(r.id, { time: e.target.value })}
+                            aria-label="Reminder time" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Footer ── */}
+          <div className={s.footer}>
+            <button type="button" className={s.cancelBtn} onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className={s.submitBtn}>
+              <Clock size={15} />
+              Add to Calendar
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+</file>
+
+<file path="src/app/globals.css">
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+/* ── Reset & base ──────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-start:       #0d0100;
+  --bg-mid:         #120a00;
+  --bg-end:         #0a0000;
+  --accent-fire:    #e85d04;
+  --accent-orange:  #f48c06;
+  --accent-crimson: #d62828;
+  --accent-amber:   #ffba08;
+  --accent-teal:    #06b6d4;
+  --glass-bg:       rgba(255, 255, 255, 0.04);
+  --glass-border:   rgba(255, 255, 255, 0.10);
+  --text-primary:   #fff8f0;
+  --text-muted:     rgba(255, 248, 240, 0.55);
+}
+
+html, body {
+  min-height: 100%;
+  font-family: 'Inter', sans-serif;
+  color: var(--text-primary);
+  overflow-x: hidden;
+  background: linear-gradient(145deg, var(--bg-start) 0%, var(--bg-mid) 50%, var(--bg-end) 100%);
+}
+
+/* ── Wave canvas ──────────────────────────────────────────────────────── */
+#wave-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.30;
+}
+
+/* ── Ambient orbs — reddish-orange at top & bottom ─────────────────── */
+.orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(100px);
+  z-index: 0;
+  pointer-events: none;
+  animation: orb-drift 20s ease-in-out infinite alternate;
+}
+/* Top edge — deep orange */
+.orb-top {
+  width: 600px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(232, 93, 4, 0.55), transparent 70%);
+  top: -160px;
+  left: 10%;
+  animation-delay: 0s;
+}
+/* Bottom edge — crimson-red */
+.orb-bottom {
+  width: 550px;
+  height: 380px;
+  background: radial-gradient(circle, rgba(214, 40, 40, 0.50), transparent 70%);
+  bottom: -140px;
+  right: 8%;
+  animation-delay: -8s;
+}
+/* Mid accent — amber */
+.orb-mid {
+  width: 320px;
+  height: 320px;
+  background: radial-gradient(circle, rgba(255, 186, 8, 0.22), transparent 70%);
+  top: 40%;
+  left: 55%;
+  animation-delay: -14s;
+}
+
+@keyframes orb-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(24px, -36px) scale(1.08); }
+  100% { transform: translate(-18px, 18px) scale(0.94); }
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────── */
+.app-layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Left control panel ───────────────────────────────────────────────── */
+.control-panel {
+  width: 400px;
+  min-width: 360px;
+  max-width: 420px;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 2rem 1.5rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(12px);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 93, 4, 0.3) transparent;
+}
+
+/* ── Right calendar view ──────────────────────────────────────────────── */
+.calendar-panel {
+  flex: 1;
+  height: 100vh;
+  overflow: hidden;
+  padding: 1.5rem 1.5rem 1.5rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Glass card ───────────────────────────────────────────────────────── */
+.glass-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  padding: 1.5rem;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 20px 60px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: box-shadow 0.3s ease;
+}
+.glass-card:hover {
+  box-shadow:
+    0 0 0 1px rgba(232, 93, 4, 0.2),
+    0 20px 60px rgba(0, 0, 0, 0.55),
+    0 0 40px rgba(232, 93, 4, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* ── Badge ────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-orange);
+  background: rgba(244, 140, 6, 0.12);
+  border: 1px solid rgba(244, 140, 6, 0.28);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+
+/* ── Gradient heading ─────────────────────────────────────────────────── */
+.gradient-heading {
+  font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.1;
+  background: linear-gradient(135deg, #ffedcc 0%, #f48c06 40%, #e85d04 75%, #d62828 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.4rem;
+}
+
+.subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ── Sync button ──────────────────────────────────────────────────────── */
+.sync-btn {
+  width: 100%;
+  padding: 0.9rem 1.5rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-crimson) 0%, var(--accent-fire) 50%, var(--accent-orange) 100%);
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s, box-shadow 0.18s;
+  box-shadow: 0 4px 24px rgba(232, 93, 4, 0.45);
+}
+.sync-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18) 0%, transparent 55%);
+  border-radius: inherit;
+}
+.sync-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(232, 93, 4, 0.6);
+}
+.sync-btn:active:not(:disabled) { transform: translateY(0); }
+.sync-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+/* ── Spinner ──────────────────────────────────────────────────────────── */
+.spinner {
+  width: 17px;
+  height: 17px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Task list ────────────────────────────────────────────────────────── */
+.task-list-header {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-orange);
+  margin-bottom: 0.6rem;
+}
+.task-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.7rem 1rem;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+.task-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Event count badge ───────────────────────────────────────────────── */
+.events-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.events-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(232, 93, 4, 0.2);
+  border: 1px solid rgba(232, 93, 4, 0.35);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-fire);
+  padding: 1px 9px;
+}
+
+/* ── Error banner ─────────────────────────────────────────────────────── */
+.error-banner {
+  background: rgba(214, 40, 40, 0.12);
+  border: 1px solid rgba(214, 40, 40, 0.3);
+  border-radius: 12px;
+  padding: 0.85rem 1.1rem;
+  color: #fca5a5;
+  font-size: 0.875rem;
+  animation: fade-up 0.4s ease both;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Calendar panel header ───────────────────────────────────────────── */
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.calendar-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.calendar-title span {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* ── FullCalendar dark theme overrides ──────────────────────────────── */
+.fc {
+  height: 100% !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 0.82rem !important;
+  color: var(--text-primary) !important;
+}
+.fc-theme-standard .fc-scrollgrid { border-color: rgba(255,255,255,0.08) !important; }
+.fc-theme-standard td, .fc-theme-standard th { border-color: rgba(255,255,255,0.07) !important; }
+.fc-col-header-cell-cushion { color: var(--text-muted) !important; font-weight: 600 !important; font-size: 0.75rem !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; text-decoration: none !important; }
+.fc-daygrid-day-number { color: var(--text-muted) !important; text-decoration: none !important; }
+.fc-timegrid-slot-label-cushion { color: rgba(255,255,255,0.3) !important; font-size: 0.72rem !important; }
+.fc-timegrid-now-indicator-line { border-color: var(--accent-fire) !important; border-width: 2px !important; }
+.fc-timegrid-now-indicator-arrow { border-top-color: var(--accent-fire) !important; border-bottom-color: var(--accent-fire) !important; }
+.fc .fc-button-primary { background: rgba(232, 93, 4, 0.15) !important; border: 1px solid rgba(232, 93, 4, 0.3) !important; color: var(--accent-orange) !important; font-weight: 600 !important; font-size: 0.78rem !important; border-radius: 8px !important; transition: all 0.2s !important; }
+.fc .fc-button-primary:hover { background: rgba(232, 93, 4, 0.3) !important; }
+.fc .fc-button-primary:not(:disabled).fc-button-active, .fc .fc-button-primary:not(:disabled):active { background: rgba(232, 93, 4, 0.4) !important; }
+.fc .fc-toolbar-title { font-size: 1rem !important; font-weight: 700 !important; color: var(--text-primary) !important; }
+.fc-event { border-radius: 8px !important; border: none !important; padding: 2px 6px !important; font-weight: 600 !important; font-size: 0.78rem !important; cursor: pointer !important; }
+.fc-event-title { font-weight: 600 !important; }
+.fc-event-time { font-size: 0.7rem !important; opacity: 0.85 !important; }
+.fc-scrollgrid-sync-inner { background: rgba(0,0,0,0.2) !important; }
+.fc-timegrid-col { background: transparent !important; }
+.fc-day-today { background: rgba(232, 93, 4, 0.05) !important; }
+.fc-highlight { background: rgba(232, 93, 4, 0.1) !important; }
+/* Selection mirror (drag to create) */
+.fc-timegrid-event.fc-event-mirror { background: rgba(56, 189, 248, 0.35) !important; border: 2px dashed #38bdf8 !important; border-radius: 8px !important; }
+
+/* ── Settings grid ───────────────────────────────────────────────────── */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.settings-field--full {
+  grid-column: 1 / -1;
+}
+.settings-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.settings-input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  color-scheme: dark;
+}
+.settings-input:focus {
+  border-color: rgba(232, 93, 4, 0.5);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.12);
+}
+.settings-input[type="number"]::-webkit-inner-spin-button {
+  opacity: 0.4;
+  filter: invert(1);
+}
+
+/* ── Manual deadline button ──────────────────────────────────────────── */
+.manual-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 0.9rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+.manual-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(56, 189, 248, 0.2);
+}
+.manual-btn:active { transform: translateY(0); }
+
+/* ── Calendar legend ─────────────────────────────────────────────────── */
+.calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.legend-label {
+  font-weight: 500;
+  margin-right: 0.4rem;
+}
+.legend-hint {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   DEADLINE MODAL
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Backdrop ─────────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 100;
+  animation: backdrop-in 0.2s ease both;
+}
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Panel ────────────────────────────────────────────────────────────── */
+.modal-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 480px;
+  max-width: 95vw;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(160deg, rgba(18, 6, 2, 0.97) 0%, rgba(10, 4, 0, 0.98) 100%);
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: -24px 0 80px rgba(0, 0, 0, 0.7), -1px 0 0 rgba(232, 93, 4, 0.15);
+  animation: panel-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+@keyframes panel-slide-in {
+  from { transform: translateX(100%); opacity: 0.5; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+  background: rgba(232, 93, 4, 0.04);
+}
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.modal-title-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent-crimson), var(--accent-fire));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(232, 93, 4, 0.4);
+}
+.modal-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.modal-close-btn:hover {
+  background: rgba(214, 40, 40, 0.15);
+  border-color: rgba(214, 40, 40, 0.35);
+  color: #fca5a5;
+}
+
+/* ── Scrollable body ──────────────────────────────────────────────────── */
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 93, 4, 0.3) transparent;
+}
+
+/* ── Field ────────────────────────────────────────────────────────────── */
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.modal-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.modal-required {
+  color: var(--accent-fire);
+}
+.modal-input {
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  color-scheme: dark;
+}
+.modal-input:focus {
+  border-color: rgba(232, 93, 4, 0.5);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.12);
+}
+.modal-input--error {
+  border-color: rgba(214, 40, 40, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.1) !important;
+}
+.modal-input--sm {
+  padding: 0.45rem 0.65rem;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
+.modal-error-msg {
+  font-size: 0.72rem;
+  color: #f87171;
+  margin-top: 1px;
+}
+.modal-textarea {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  font-weight: 400;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  color-scheme: dark;
+}
+.modal-textarea::placeholder { color: rgba(255, 255, 255, 0.2); }
+.modal-textarea:focus {
+  border-color: rgba(232, 93, 4, 0.5);
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, 0.1);
+}
+
+/* ── Date+Time row ────────────────────────────────────────────────────── */
+.modal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+
+/* ── Reminders section ────────────────────────────────────────────────── */
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.modal-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.modal-reminder-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(232, 93, 4, 0.25);
+  border: 1px solid rgba(232, 93, 4, 0.4);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--accent-fire);
+}
+.modal-add-reminder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.35rem 0.8rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent-orange);
+  background: rgba(244, 140, 6, 0.1);
+  border: 1px solid rgba(244, 140, 6, 0.28);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.modal-add-reminder-btn:hover {
+  background: rgba(244, 140, 6, 0.2);
+  border-color: rgba(244, 140, 6, 0.45);
+}
+.modal-empty-hint {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.2);
+  font-style: italic;
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
+/* ── Reminder rows ────────────────────────────────────────────────────── */
+.modal-reminders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.reminder-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  position: relative;
+  animation: fade-up 0.22s ease both;
+}
+.reminder-index {
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  background: rgba(232, 93, 4, 0.2);
+  border: 1px solid rgba(232, 93, 4, 0.35);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--accent-fire);
+  padding: 1px 7px;
+}
+
+/* ── Recurrence type pills ────────────────────────────────────────────── */
+.reminder-type-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.reminder-type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.3rem 0.65rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.reminder-type-pill:hover {
+  background: rgba(232, 93, 4, 0.1);
+  border-color: rgba(232, 93, 4, 0.25);
+  color: var(--accent-orange);
+}
+.reminder-type-pill.active {
+  background: rgba(232, 93, 4, 0.18);
+  border-color: rgba(232, 93, 4, 0.45);
+  color: var(--accent-orange);
+  box-shadow: 0 0 10px rgba(232, 93, 4, 0.15);
+}
+
+/* ── Reminder date/time row ───────────────────────────────────────────── */
+.reminder-datetime {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.reminder-recur-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Delete reminder button ───────────────────────────────────────────── */
+.reminder-delete-btn {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(214, 40, 40, 0.2);
+  background: rgba(214, 40, 40, 0.08);
+  color: rgba(248, 113, 113, 0.6);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.reminder-delete-btn:hover {
+  background: rgba(214, 40, 40, 0.2);
+  border-color: rgba(214, 40, 40, 0.4);
+  color: #f87171;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+.modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.2);
+}
+.modal-cancel-btn {
+  flex: 1;
+  padding: 0.7rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.modal-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text-primary);
+}
+.modal-submit-btn {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.7rem 1rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-crimson) 0%, var(--accent-fire) 55%, var(--accent-orange) 100%);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s, box-shadow 0.18s;
+  box-shadow: 0 4px 20px rgba(232, 93, 4, 0.4);
+}
+.modal-submit-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.16) 0%, transparent 55%);
+  border-radius: inherit;
+}
+.modal-submit-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 28px rgba(232, 93, 4, 0.55);
+}
+.modal-submit-btn:active { transform: translateY(0); }
+</file>
+
+<file path="src/app/layout.tsx">
+import type { Metadata } from "next";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Last-Minute Life Saver — AI Scheduling Assistant",
+  description:
+    "AI-powered CRM scheduling assistant. Sync your tasks and get a stress-free 48-hour focus schedule — powered by Gemini 2.5 Flash.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" className="h-full">
+      <body className="h-full overflow-hidden">{children}</body>
+    </html>
+  );
+}
+</file>
+
+<file path="src/app/page.tsx">
+"use client";
+
+import { useEffect, useRef, useState, useCallback } from "react";
+import dynamic from "next/dynamic";
+import { Calendar, RefreshCw, Zap, CheckCircle2, AlertCircle, PlusCircle, Settings2 } from "lucide-react";
+import interactionPlugin from "@fullcalendar/interaction";
+import type { DateSelectArg } from "@fullcalendar/core";
+import dayGridPlugin from "@fullcalendar/daygrid";
+import timeGridPlugin from "@fullcalendar/timegrid";
+import DeadlineModal, { type DeadlineFormData } from "./components/DeadlineModal";
+
+// Dynamically import FullCalendar to avoid SSR issues
+const FullCalendar = dynamic(() => import("@fullcalendar/react"), { ssr: false });
+
+// ── Types ──────────────────────────────────────────────────────────────────
+interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  backgroundColor: string;
+  borderColor?: string;
+  textColor?: string;
+  extendedProps?: {
+    description?: string;
+    reminders?: DeadlineFormData["reminders"];
+  };
+}
+
+interface ModalState {
+  open: boolean;
+  prefillDate?: string;
+  prefillTime?: string;
+  prefillEndDate?: string;
+  prefillEndTime?: string;
+}
+
+// ── Mock CRM tasks ─────────────────────────────────────────────────────────
+const MOCK_CRM_TASKS = [
+  "Follow up with Acme Corp on Q3 proposal and address pricing objections",
+  "Prepare and send onboarding materials to 3 new enterprise clients",
+  "Audit overdue support tickets and escalate priority-1 blockers to engineering",
+];
+
+const TASK_PREVIEW_COLORS = ["#e85d04", "#f48c06", "#d62828"];
+const MANUAL_EVENT_COLOR  = "#38bdf8";
+
+// ── Wave canvas hook ───────────────────────────────────────────────────────
+function useWaveCanvas(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let W = 0, H = 0;
+    let rafId: number;
+
+    const waves = [
+      { amp: 55, freq: 0.007, speed: 0.011, color: "#e85d04", y: 0.52 },
+      { amp: 40, freq: 0.010, speed: 0.017, color: "#f48c06", y: 0.60 },
+      { amp: 30, freq: 0.013, speed: 0.009, color: "#d62828", y: 0.68 },
+      { amp: 45, freq: 0.005, speed: 0.020, color: "#ffba08", y: 0.45 },
+    ];
+
+    function resize() {
+      W = canvas!.width  = window.innerWidth;
+      H = canvas!.height = window.innerHeight;
+    }
+
+    function drawWave(wave: typeof waves[0], t: number) {
+      ctx!.beginPath();
+      ctx!.moveTo(0, H);
+      for (let x = 0; x <= W; x += 4) {
+        const y =
+          wave.y * H +
+          Math.sin(x * wave.freq + t * wave.speed * 60) * wave.amp +
+          Math.sin(x * wave.freq * 1.7 + t * wave.speed * 40) * (wave.amp * 0.4);
+        ctx!.lineTo(x, y);
+      }
+      ctx!.lineTo(W, H);
+      ctx!.closePath();
+      const grad = ctx!.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, wave.color + "55");
+      grad.addColorStop(1, wave.color + "00");
+      ctx!.fillStyle = grad;
+      ctx!.fill();
+    }
+
+    function animate(ts: number) {
+      const t = ts / 1000;
+      ctx!.clearRect(0, 0, W, H);
+      waves.forEach((w) => drawWave(w, t));
+      rafId = requestAnimationFrame(animate);
+    }
+
+    resize();
+    window.addEventListener("resize", resize);
+    rafId = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", resize);
+    };
+  }, [canvasRef]);
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function uid() {
+  return `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function toDateStr(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+function toTimeStr(d: Date) {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────
+export default function Home() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+  const [synced, setSynced]   = useState(false);
+
+  // ── Persist events to localStorage ────────────────────────────────────
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("lifesaver_events");
+      if (stored) setEvents(JSON.parse(stored));
+    } catch {
+      // corrupt data — start fresh
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("lifesaver_events", JSON.stringify(events));
+  }, [events]);
+
+  // User settings
+  const [workStart, setWorkStart]           = useState("09:00");
+  const [workEnd, setWorkEnd]               = useState("18:00");
+  const [timeframeHours, setTimeframeHours] = useState(48);
+
+  // Modal state — carries optional pre-fill from calendar drag
+  const [modal, setModal] = useState<ModalState>({ open: false });
+
+  // Pending calendar selection (so we can unselect if user cancels)
+  const pendingSelect = useRef<DateSelectArg | null>(null);
+
+  useWaveCanvas(canvasRef);
+
+  // ── Open modal from calendar drag ──────────────────────────────────────
+  const handleCalendarSelect = useCallback((selectInfo: DateSelectArg) => {
+    pendingSelect.current = selectInfo;
+    setModal({
+      open: true,
+      prefillDate: toDateStr(selectInfo.start),
+      prefillTime: toTimeStr(selectInfo.start),
+      prefillEndDate: toDateStr(selectInfo.end),
+      prefillEndTime: toTimeStr(selectInfo.end),
+    });
+  }, []);
+
+  // ── Open modal from button ─────────────────────────────────────────────
+  const handleAddManual = useCallback(() => {
+    pendingSelect.current = null;
+    const now   = new Date();
+    const start = new Date(now.getTime() + 60 * 60 * 1000);
+    setModal({
+      open: true,
+      prefillDate: toDateStr(start),
+      prefillTime: toTimeStr(start),
+    });
+  }, []);
+
+  // ── Close modal ────────────────────────────────────────────────────────
+  const handleModalClose = useCallback(() => {
+    pendingSelect.current?.view.calendar.unselect();
+    pendingSelect.current = null;
+    setModal({ open: false });
+  }, []);
+
+  // ── Submit modal → create calendar event ──────────────────────────────
+  const handleModalSubmit = useCallback((data: DeadlineFormData) => {
+    // Build start from form date + time
+    const start = new Date(`${data.date}T${data.time}`);
+
+    // If came from drag: use drag end; else default +45 min
+    let end: Date;
+    if (pendingSelect.current) {
+      end = pendingSelect.current.end;
+      pendingSelect.current.view.calendar.unselect();
+      pendingSelect.current = null;
+    } else {
+      end = new Date(start.getTime() + 45 * 60 * 1000);
+    }
+
+    const event: CalendarEvent = {
+      id: uid(),
+      title: data.name,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      backgroundColor: MANUAL_EVENT_COLOR,
+      borderColor: MANUAL_EVENT_COLOR,
+      textColor: "#0f172a",
+      extendedProps: {
+        description: data.description,
+        reminders: data.reminders,
+      },
+    };
+
+    setEvents((prev) => [...prev, event]);
+    setModal({ open: false });
+  }, []);
+
+  // ── Sync CRM tasks ─────────────────────────────────────────────────────
+  const handleSync = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setSynced(false);
+
+    try {
+      const res = await fetch("/api/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: MOCK_CRM_TASKS, workStart, workEnd, timeframeHours }),
+      });
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `Server error ${res.status}`);
+      }
+
+      const data: Omit<CalendarEvent, "id">[] = await res.json();
+      const enriched: CalendarEvent[] = data.map((e) => ({
+        ...e,
+        id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        borderColor: e.backgroundColor,
+        textColor: "#ffffff",
+      }));
+
+      setEvents((prev) => {
+        const manual = prev.filter((ev) => ev.id.startsWith("manual-"));
+        return [...manual, ...enriched];
+      });
+      setSynced(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [workStart, workEnd, timeframeHours]);
+
+  const manualCount = events.filter((e) => e.id.startsWith("manual-")).length;
+  const aiCount     = events.length - manualCount;
+
+  return (
+    <>
+      {/* ── Background layers ── */}
+      <canvas ref={canvasRef} id="wave-canvas" aria-hidden="true" />
+      <div className="orb orb-top"    aria-hidden="true" />
+      <div className="orb orb-bottom" aria-hidden="true" />
+      <div className="orb orb-mid"    aria-hidden="true" />
+
+      {/* ── Deadline Modal ── */}
+      <DeadlineModal
+        isOpen={modal.open}
+        prefillDate={modal.prefillDate}
+        prefillTime={modal.prefillTime}
+        onClose={handleModalClose}
+        onSubmit={handleModalSubmit}
+      />
+
+      {/* ── App layout ── */}
+      <div className="app-layout">
+
+        {/* ─── Left: Control Panel ──────────────────────────────────────── */}
+        <aside className="control-panel">
+          {/* Header */}
+          <div>
+            <span className="badge">
+              <Zap size={11} />
+              AI Scheduler
+            </span>
+            <h1 className="gradient-heading" style={{ marginTop: "0.75rem" }}>
+              Last-Minute<br />Life Saver
+            </h1>
+            <p className="subtitle">
+              Sync your CRM backlog and let Gemini build a stress-free focus
+              schedule — on your terms.
+            </p>
+          </div>
+
+          {/* CRM Tasks preview */}
+          <div className="glass-card">
+            <div className="task-list-header">📋 CRM Tasks Queue</div>
+            {MOCK_CRM_TASKS.map((task, i) => (
+              <div key={i} className="task-pill">
+                <div className="task-pill-dot" style={{ backgroundColor: TASK_PREVIEW_COLORS[i] }} />
+                <span style={{ fontSize: "0.82rem", lineHeight: 1.4 }}>{task}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Availability Settings */}
+          <div className="glass-card">
+            <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "1rem" }}>
+              <Settings2 size={13} />
+              Availability Settings
+            </div>
+            <div className="settings-grid">
+              <div className="settings-field">
+                <label htmlFor="work-start" className="settings-label">Work Start</label>
+                <input id="work-start" type="time" className="settings-input" value={workStart} onChange={(e) => setWorkStart(e.target.value)} />
+              </div>
+              <div className="settings-field">
+                <label htmlFor="work-end" className="settings-label">Work End</label>
+                <input id="work-end" type="time" className="settings-input" value={workEnd} onChange={(e) => setWorkEnd(e.target.value)} />
+              </div>
+              <div className="settings-field settings-field--full">
+                <label htmlFor="timeframe-hours" className="settings-label">Scheduling Window (hours)</label>
+                <input id="timeframe-hours" type="number" className="settings-input" min={1} max={168} value={timeframeHours} onChange={(e) => setTimeframeHours(Math.max(1, parseInt(e.target.value) || 1))} />
+              </div>
+            </div>
+          </div>
+
+          {/* Sync button */}
+          <div>
+            <button id="sync-crm-btn" className="sync-btn" onClick={handleSync} disabled={loading} aria-label="Sync CRM tasks and generate schedule">
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", position: "relative" }}>
+                {loading ? (
+                  <><span className="spinner" aria-hidden="true" />Generating Schedule…</>
+                ) : (
+                  <><RefreshCw size={16} />Sync CRM Tasks</>
+                )}
+              </span>
+            </button>
+
+            {synced && !loading && (
+              <div className="events-meta" style={{ marginTop: "0.75rem" }}>
+                <CheckCircle2 size={14} color="#4ade80" />
+                <span>Schedule generated —</span>
+                <span className="events-count">{aiCount} AI blocks</span>
+                {manualCount > 0 && (
+                  <span className="events-count" style={{ background: "rgba(56,189,248,0.15)", borderColor: "rgba(56,189,248,0.35)", color: "#38bdf8" }}>
+                    {manualCount} manual
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="error-banner" role="alert">
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                <AlertCircle size={15} style={{ marginTop: "1px", flexShrink: 0, color: "#f87171" }} />
+                <span>{error}</span>
+              </div>
+            </div>
+          )}
+
+          {/* How it works */}
+          <div className="glass-card" style={{ marginTop: "auto" }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "0.6rem" }}>
+              ⚡ How it works
+            </div>
+            <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "0.55rem", fontSize: "0.82rem", color: "var(--text-muted)", lineHeight: 1.55 }}>
+              <li>▸ Simulates pulling 3 tasks from CRM</li>
+              <li>▸ Gemini AI schedules 45-min focus blocks</li>
+              <li>▸ 15-min gaps between each block</li>
+              <li>▸ Respects your custom work hours & window</li>
+              <li>▸ Click "Add Deadline" or drag calendar to create manual events</li>
+            </ul>
+          </div>
+
+          <footer style={{ fontSize: "0.7rem", color: "rgba(255,255,255,0.2)", textAlign: "center", paddingTop: "0.5rem" }}>
+            Built with{" "}
+            <span style={{ color: "rgba(232,93,4,0.6)" }}>Gemini 2.5 Flash</span>
+            {" "}· Next.js 14 · FullCalendar
+          </footer>
+        </aside>
+
+        {/* ─── Right: Calendar View ──────────────────────────────────────── */}
+        <main className="calendar-panel">
+          <div className="calendar-header">
+            <div className="calendar-title">
+              <Calendar size={18} color="var(--accent-orange)" />
+              Focus Schedule
+              <span>{timeframeHours}-hour view</span>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              {events.length > 0 && (
+                <div className="events-count">{events.length} blocks</div>
+              )}
+              <button
+                id="add-manual-deadline-btn"
+                className="manual-btn"
+                onClick={handleAddManual}
+                aria-label="Add a manual deadline"
+              >
+                <PlusCircle size={14} />
+                Add Deadline
+              </button>
+            </div>
+          </div>
+
+          {/* Legend */}
+          <div className="calendar-legend">
+            <span className="legend-dot" style={{ backgroundColor: "#e85d04" }} />
+            <span className="legend-label">AI Scheduled</span>
+            <span className="legend-dot" style={{ backgroundColor: MANUAL_EVENT_COLOR }} />
+            <span className="legend-label">Manual Deadline</span>
+            <span className="legend-hint">· Drag a time slot to add a deadline</span>
+          </div>
+
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <FullCalendar
+              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+              initialView="timeGridWeek"
+              headerToolbar={{ left: "prev,next today", center: "title", right: "timeGridWeek,timeGridDay" }}
+              events={events}
+              height="100%"
+              slotMinTime="07:00:00"
+              slotMaxTime="21:00:00"
+              nowIndicator={true}
+              allDaySlot={false}
+              slotDuration="00:15:00"
+              slotLabelInterval="01:00:00"
+              expandRows={true}
+              eventDisplay="block"
+              selectable={true}
+              selectMirror={true}
+              select={handleCalendarSelect}
+              unselectAuto={false}
+              eventMouseEnter={(info) => {
+                info.el.style.filter     = "brightness(1.15)";
+                info.el.style.transform  = "scale(1.02)";
+                info.el.style.zIndex     = "9";
+                info.el.style.transition = "all 0.15s ease";
+              }}
+              eventMouseLeave={(info) => {
+                info.el.style.filter    = "";
+                info.el.style.transform = "";
+                info.el.style.zIndex    = "";
+              }}
+            />
+          </div>
+        </main>
+      </div>
+    </>
+  );
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+</file>
+
+</files>
